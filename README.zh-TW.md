@@ -2,7 +2,7 @@
 
 [English](README.md) | **繁體中文**
 
-flogg 是以 [klogg](https://github.com/variar/klogg) 為基礎的 log 檢視器。它保留了 klogg 快速的檔案讀取與搜尋，並加入客製化程度更高的 [TextAnalysisTool](https://textanalysistool.github.io/) 風格 filter panel。
+flogg 是以 [klogg](https://github.com/variar/klogg) 為基礎的 log 檢視器，保留了 klogg 快速的檔案讀取與搜尋，並加入客製化程度更高的 [TextAnalysisTool](https://textanalysistool.github.io/) 風格 filter panel。
 
 ![顯示 filter panel 的 flogg](docs/images/filter-panel.png)
 
@@ -12,12 +12,13 @@ Windows（x64）與 macOS（Apple Silicon）的安裝檔請到 [Releases 頁面]
 
 ### Filter panel：TAT 風格，更方便的 filter 管理器
 
-- Filter 支援巢狀的群組樹狀結構管理。
+- Filter 支援巢狀群組管理。
 - 每個 filter 可設定 pattern（text 或 regex）、大小寫敏感、排除、前景／背景顏色，顏色可套用在整行或只套用在符合的文字。
 - 可個別、整個群組或一次全部啟用／停用 filter；也可以暫時 suspend（不會改動原本的啟用狀態）。
 - 選中 filter 後，在主視窗或過濾視窗按 `F8` / `Shift+F8` 在命中行間跳轉。
 - 滑鼠停在 log 檢視的某一行時，會依優先順序列出命中該行的 filter 與其編號。
 - 在欄位標題按右鍵可選擇要顯示的欄位，各欄寬度可個別調整。
+- 箭頭按鈕右邊的 `🔗Shared` 讓不同分頁共用 filter：所有開啟共用模式的分頁（不論在哪個視窗）都顯示同一組 filter，任一處的修改不論是否已儲存，都會立即同步到其他分頁。第一個開啟共用的分頁會把自己的 filter 複製一份作為共用 filter；共用 filter 第一次被修改時會變成 untitled，存檔時會詢問檔名，不會覆蓋該分頁原本的 filter 檔。關閉 `🔗Shared` 後恢復該分頁自己的 filter（若有修改，開啟共用前會先詢問是否儲存）。使用共用 filter 的分頁和所屬視窗會顯示鏈結圖示🔗。
 
 ### 快速過濾：與 klogg 同樣高效的搜尋與過濾
 
@@ -37,25 +38,46 @@ Windows（x64）與 macOS（Apple Silicon）的安裝檔請到 [Releases 頁面]
 ### Filter / conf 檔
 
 - 每個分頁各自保存 filter：清單、啟用／停用／暫停狀態，以及使用的 JSON filter 檔。新開的檔案載入預設 filter 檔，即 `filters.flogg-filters.json` 或最近一次開啟／另存的 filter 檔（位置見下方[命令列](#命令列)）。
-- Filter 只在 `Save filters`（filter panel 中按 `Ctrl+S`）時才寫入檔案；檔名後的 `*` 表示有未儲存的修改，關閉分頁或 flogg 時會詢問是否儲存。
+- Filter 只在 `Save filters`（filter panel 中按 `Ctrl+S`）時才寫入檔案；檔名後的 `*` 表示有未儲存的修改，關閉分頁或 flogg 時會詢問是否儲存。共用 filter 只在關閉最後一個使用它的分頁時才會詢問。
+- 某個分頁儲存 filter 檔時，其他使用同一個檔案的分頁會自動套用存檔後的內容；有未儲存修改的分頁則不會套用，只會標示 `(saved by another tab)`。若檔案在載入後已被其他分頁或程式修改，存檔時會詢問要覆蓋還是重新載入。
 - 支援匯入 TextAnalysisTool 的 `.tat` 檔。
 - 支援匯入 klogg 的 predefined filters 與 highlighters。
 - 應用相關設定（UI、shortcuts 等等）預設儲存於 `flogg.conf`（位置見下方[命令列](#命令列)）。
   `File > Import settings...` 與 `File > Export settings...` 可從其他 `.conf` 檔匯入或匯出設定，不含 session。
 
+### 視窗
+
+- 不論以何種方式啟動（雙擊、工作列、檔案關聯、命令列），每次啟動都會開一個新視窗。使用同一個設定檔的視窗屬於同一個 flogg，因此可以共用 filter，也可以從命令列操作；`-m` 則會另外啟動一個獨立 process 的 flogg。
+- `Window > Rename window...` 可為視窗命名，標題會顯示這個名稱而不是檔名；`Window` 選單會列出所有視窗及其 id（`#2`）。
+- 同一個檔案可以在多個視窗中開啟，每個分頁各有自己的 filter。
+
 ### 命令列
 
 - `--config <file>`：改用指定的設定檔讀寫設定，不影響預設的 `flogg.conf`；對應 session 存在同目錄的 `<name>_session.conf`。
-- `--filters <file>`：以指定的 filter 檔開啟 flogg，但不把它設為預設 filter 檔。
-- 不論以何種方式啟動（雙擊、工作列、檔案關聯、命令列），每次啟動都是新的 flogg instance（等同 klogg 的 `-m`）。
-- 預設不恢復上次的 session。在 `File > Preferences` 勾選 `Load last session` 後，第一個不帶檔案啟動的 flogg 會恢復最後關閉的 flogg 的視窗、檔案與各分頁的 filter；`-s`／`-n` 可強制開啟或關閉。
+- 預設不恢復上次的 session。在 `File > Preferences` 勾選 `Load last session` 後，不帶檔案啟動的 flogg 會恢復上次關閉時的視窗（含名稱）、檔案與各分頁的 filter；`-s`／`-n` 可強制開啟或關閉。
+
+操作執行中 flogg 視窗的指令（完整清單見 `flogg --help`）：
+
+| 選項 | 作用 |
+| --- | --- |
+| `flogg a.log b.log` | 在新視窗開啟這些檔案 |
+| `-L`、`--list-windows`（`--json`） | 列出所有視窗：id、名稱與分頁（`*` 為目前分頁） |
+| `-w`、`--window <id\|name>` | 在該視窗以分頁開啟檔案（id 如 `2` 或 `#2`，或視窗名稱）；不帶檔案時，下列選項套用到它目前的分頁 |
+| `--window-name <name>` | 為新視窗命名，或為 `--window` 指定的視窗改名 |
+| `--filters <file>` | 開啟的分頁從該檔案載入 filter，但不設為預設 filter 檔 |
+| `--add-filter <text>`、`--add-regex <regex>` | 為開啟的分頁新增 filter（可重複）；`--filter-color <color>` 設定其背景色 |
+| `--shared-filters` | 開啟的分頁使用共用 filter |
+| `--line <n>` | 在開啟的分頁選取第 n 行（從 1 起算） |
+| `-f`、`--follow` | Follow 開啟的檔案 |
+
+例如 `flogg -w wifi --add-regex "wlan\d" --line 1200 kernel.log` 會在名為 `wifi` 的視窗開啟 `kernel.log`、新增一個 filter 並選取第 1200 行。發生錯誤（找不到視窗、檔案不存在、regex 無效）時會印出訊息，且不做任何動作。
 - Windows 版的設定（`flogg.conf`）與預設 filter 檔放在 `flogg.exe` 旁邊，整個資料夾為 portable。
 - macOS 版依照系統慣例存放：設定在 `~/Library/Preferences/com.flogg.flogg.plist`，預設 filter 檔在
   `~/Library/Application Support/flogg/filters.flogg-filters.json`；使用 `--config` 時，預設 filter 檔改放在該設定檔旁邊。
 
 ### 相較 klogg 移除的功能
 
-Predefined filters、highlighter sets、搜尋結果高亮、清空檔案、版本檢查與 Help 選單連結，已由 filter panel 取代或移除。
+Predefined filters、highlighter sets、常駐搜尋結果高亮(highlight match)、清空檔案(clear file)、版本檢查與 Help 選單連結，已由 filter panel 取代或移除。
 
 ## 快捷鍵
 
@@ -82,6 +104,8 @@ Predefined filters、highlighter sets、搜尋結果高亮、清空檔案、版�
 | 啟用／停用單一 filter | | 勾選框 |
 | 啟用／停用（群組內）、全部啟用、全部停用 | | 右鍵選單 |
 | Suspend／Resume、全部 Suspend／全部 Resume | | 右鍵選單 |
+| 全部展開／全部收起群組 | | 右鍵選單 |
+| 使用共用 filter | | `Shared` 按鈕 |
 | 加入搜尋、從搜尋排除、取代搜尋 | | 右鍵選單 |
 | 選擇要顯示的欄位 | | 在欄位標題按右鍵 |
 | 儲存 filter | `Ctrl+S` | `File` 按鈕 |
