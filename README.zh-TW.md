@@ -47,6 +47,8 @@ Windows（x64）與 macOS（Apple Silicon）的安裝檔請到 [Releases 頁面]
 
 - `--config <file>`：改用指定的設定檔讀寫設定，不影響預設的 `flogg.conf`；對應 session 存在同目錄的 `<name>_session.conf`。
 - `--filters <file>`：以指定的 filter 檔開啟 flogg，但不把它設為預設 filter 檔。
+- `--window <name> [files]`：把檔案開到指定名字的 window，不限是哪個 flogg 開的；沒有這個 window 時，會開一個同名的新 window。名字不分大小寫，也會忽略多餘的空白。開新 window 時指令不會結束，腳本裡要放背景執行（Windows：`start "" flogg --window "問題A" new.log`）。
+- 用 `File > Rename window...` 替 window 命名：名字會顯示在標題列最前面，也就是 `--window` 使用的名字，並存在 session 裡。其他 window 已使用的名字會被拒絕，留空則清除名字。
 - 不論以何種方式啟動（雙擊、工作列、檔案關聯、命令列），每次啟動都是新的 flogg instance（等同 klogg 的 `-m`）。
 - 預設不恢復上次的 session。在 `File > Preferences` 勾選 `Load last session` 後，第一個不帶檔案啟動的 flogg 會恢復最後關閉的 flogg 的視窗、檔案與各分頁的 filter；`-s`／`-n` 可強制開啟或關閉。
 - Windows 版的設定（`flogg.conf`）與預設 filter 檔放在 `flogg.exe` 旁邊，整個資料夾為 portable。

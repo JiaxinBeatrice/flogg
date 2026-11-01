@@ -47,6 +47,8 @@ Downloads for Windows (x64) and macOS (Apple Silicon) are on the [releases page]
 
 - `--config <file>` reads and writes the settings in that file (any name) instead of the default `flogg.conf`; the session goes to `<name>_session.conf` next to it.
 - `--filters <file>` opens flogg with that filter file without making it the default one.
+- `--window <name> [files]` opens the files in the window with that name, in any running flogg. Without such a window, a new one with that name opens. Names ignore case and extra spaces. When flogg opens a new window the command keeps running, so start it in the background from a script (`start "" flogg --window "bug A" new.log` on Windows).
+- Name a window with `File > Rename window...`: the name comes first in the title bar, is the one `--window` looks for, and is saved in the session. A name in use by another window is refused; an empty name removes it.
 - Every start of flogg is a new instance (as with klogg's `-m`), however it is started: double click, taskbar, file association or command line.
 - The previous session is not restored by default. With `Load last session` in `File > Preferences`, the first flogg started without a file restores the windows, files and per tab filters of the flogg closed last; `-s` / `-n` force it on or off.
 - On Windows the settings (`flogg.conf`) and the default filter file are kept next to `flogg.exe`, so the whole folder is portable.
