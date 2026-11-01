@@ -61,6 +61,7 @@
 #include "signalmux.h"
 #include "tabbedcrawlerwidget.h"
 #include "tabbedscratchpad.h"
+#include "windowendpoint.h"
 
 class QAction;
 class QActionGroup;
@@ -87,12 +88,21 @@ class MainWindow : public QMainWindow {
 
     void reTranslateUI();
 
+    // Name of the window, also used to find it from another flogg process. Returns false
+    // and keeps the current name when another window has that name. Empty removes it.
+    bool setDisplayName( const QString& name );
+    QString displayName() const;
+    // Takes over a name already held by the endpoint
+    void adoptEndpoint( std::unique_ptr<WindowEndpoint> endpoint );
+
     static int installLanguage( QString lang );
 
   public Q_SLOTS:
     // Load a file in a new tab (non-interactive)
     // (for use from e.g. IPC)
     void loadFileNonInteractive( const QString& file_name );
+    // Asks for the name of the window
+    void renameWindow();
 
   protected:
     void closeEvent( QCloseEvent* event ) override;
@@ -208,6 +218,8 @@ class MainWindow : public QMainWindow {
     bool extractAndLoadFile( const QString& fileName );
     void openRemoteFile( const QUrl& url );
     void updateTitleBar( const QString& fileName );
+    void openReceivedFiles( const QStringList& files, bool followFile );
+    void bringToFront();
     void addRecentFile( const QString& fileName );
     void updateRecentFileActions();
     void clearRecentFileActions();
@@ -227,6 +239,9 @@ class MainWindow : public QMainWindow {
 
     WindowSession session_;
     QString loadingFileName;
+    std::unique_ptr<WindowEndpoint> endpoint_;
+    // File shown in the title bar
+    QString titleFileName_;
 
     std::array<QAction*, MAX_RECENT_FILES> recentFileActions;
     QActionGroup* recentFilesGroup;
@@ -250,6 +265,7 @@ class MainWindow : public QMainWindow {
     QToolBar* toolBar;
 
     QAction* newWindowAction;
+    QAction* renameWindowAction;
     QAction* openAction;
     QAction* closeAction;
     QAction* closeAllAction;

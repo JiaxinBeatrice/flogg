@@ -375,6 +375,9 @@ void OptionsDialog::updateDialogFromConfig()
     // downloads
     verifySslCheckBox->setChecked( config.verifySslPeers() );
 
+    // debug
+    robustOpenFolderCheckBox->setChecked( config.robustOpenContainingFolder() );
+
     const auto encodingIndex = encodingComboBox->findData( config.defaultEncodingMib() );
     encodingComboBox->setCurrentIndex( encodingIndex < 0 ? 0 : encodingIndex );
 
@@ -603,6 +606,7 @@ void OptionsDialog::updateConfigFromDialog()
     // version checking
 
     config.setVerifySslPeers( verifySslCheckBox->isChecked() );
+    config.setRobustOpenContainingFolder( robustOpenFolderCheckBox->isChecked() );
 
     restartAppMessage = config.style() != styleComboBox->currentText();
 

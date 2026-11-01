@@ -216,6 +216,20 @@ WindowSession::WindowSession( std::shared_ptr<Session> appSession, const QString
     sessionInfo.save();
 }
 
+QString WindowSession::displayName() const
+{
+    return SessionInfo::getSynced().name( windowId_ );
+}
+
+void WindowSession::setDisplayName( const QString& name )
+{
+    auto& session = SessionInfo::getSynced();
+    // Another instance closed last may have dropped this window
+    session.add( windowId_ );
+    session.setName( windowId_, name );
+    session.save();
+}
+
 void WindowSession::restoreGeometry( QByteArray* geometry ) const
 {
     const auto& session = SessionInfo::getSynced();

@@ -869,6 +869,22 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="debugBox">
+         <property name="title">
+          <string>Debug</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_debug">
+          <item>
+           <widget class="QCheckBox" name="robustOpenFolderCheckBox">
+            <property name="text">
+             <string>Try the new &quot;Open containing folder&quot; (missing files, commas in paths)</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer_2">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

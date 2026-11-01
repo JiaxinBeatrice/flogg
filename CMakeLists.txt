@@ -225,6 +225,10 @@ add_subdirectory(website)
 
 enable_testing()
 add_test(NAME flogg_smoke COMMAND flogg -platform offscreen -v)
+if(UNIX)
+  add_test(NAME flogg_named_windows
+           COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/named_windows_e2e.sh $<TARGET_FILE:flogg>)
+endif()
 
 if(${KLOGG_BUILD_TESTS})
   add_subdirectory(tests)

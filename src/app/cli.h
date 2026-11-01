@@ -51,6 +51,9 @@ struct CliParameters {
 
     QString filters_file;
 
+    bool window_requested = false;
+    QString window_name;
+
     static constexpr auto ConfigOptionName = "config";
 
     // The settings are read before the application object exists, so the configuration
@@ -97,6 +100,12 @@ struct CliParameters {
             "filters", "load the filters from this file, without making it the default one",
             "file" );
 
+        const QCommandLineOption windowOption(
+            "window",
+            "open the files in the flogg window with this name, in any running flogg; a new "
+            "window with that name is created if there is none",
+            "name" );
+
         const QCommandLineOption loadSessionOption(
             QStringList() << "s"
                           << "load-session",
@@ -141,6 +150,7 @@ struct CliParameters {
             parser.addOption( windowHeightOption );
             parser.addOption( configOption );
             parser.addOption( filtersOption );
+            parser.addOption( windowOption );
         }
         else {
             parser.addOption( patternOption );
@@ -181,6 +191,11 @@ struct CliParameters {
 
             if ( parser.isSet( filtersOption ) ) {
                 filters_file = QFileInfo( parser.value( filtersOption ) ).absoluteFilePath();
+            }
+
+            if ( parser.isSet( windowOption ) ) {
+                window_requested = true;
+                window_name = parser.value( windowOption );
             }
         }
         else {

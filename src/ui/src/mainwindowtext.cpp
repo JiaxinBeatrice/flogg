@@ -27,6 +27,9 @@ const char* trayicon::trayiconTip = QT_TR_NOOP( "flogg log viewer" );
 // action
 const char* action::newWindowText = QT_TR_NOOP( "&New window" );
 const char* action::newWindowStatusTip = QT_TR_NOOP( "Create new flogg window" );
+const char* action::renameWindowText = QT_TR_NOOP( "Rena&me window..." );
+const char* action::renameWindowStatusTip
+    = QT_TR_NOOP( "Set the name shown in the title bar and used by --window" );
 const char* action::openText = QT_TR_NOOP( "&Open..." );
 const char* action::openStatusTip = QT_TR_NOOP( "Open a file" );
 const char* action::recentFilesCleanupText = QT_TR_NOOP("Clear List");

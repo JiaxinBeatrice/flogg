@@ -82,6 +82,56 @@ inline void showPathInFileExplorer( const QString& filePath )
 #endif
 }
 
+enum class RevealAction {
+    SelectFile,
+    OpenFolder, // the file is gone but its folder is still there
+    NotFound,
+};
+
+inline RevealAction revealActionFor( const QString& filePath )
+{
+    const QFileInfo fileInfo( filePath );
+    if ( fileInfo.exists() ) {
+        return RevealAction::SelectFile;
+    }
+    return fileInfo.absoluteDir().exists() ? RevealAction::OpenFolder : RevealAction::NotFound;
+}
+
+// explorer.exe splits its command line on commas and QProcess only quotes an argument with
+// spaces, and then the whole argument. A file name can't contain a quote on Windows.
+inline QString explorerSelectArguments( const QString& nativeFilePath )
+{
+    return QString( "/select,\"%1\"" ).arg( nativeFilePath );
+}
+
+// Returns false if nothing could be shown
+inline bool revealPathInFileExplorer( const QString& filePath )
+{
+    const QFileInfo fileInfo( filePath );
+
+    LOG_INFO << "Reveal path in explorer: " << filePath;
+
+    switch ( revealActionFor( filePath ) ) {
+    case RevealAction::SelectFile: {
+#if defined( Q_OS_WIN )
+        QProcess explorer;
+        explorer.setProgram( "explorer.exe" );
+        explorer.setNativeArguments( explorerSelectArguments(
+            QDir::toNativeSeparators( fileInfo.canonicalFilePath() ) ) );
+        return explorer.startDetached();
+#else
+        showPathInFileExplorer( filePath );
+        return true;
+#endif
+    }
+    case RevealAction::OpenFolder:
+        return QDesktopServices::openUrl( QUrl::fromLocalFile( fileInfo.absolutePath() ) );
+    case RevealAction::NotFound:
+        return false;
+    }
+    return false;
+}
+
 inline void openFileInDefaultApplication( const QString& filePath )
 {
     LOG_INFO << "Open file in default app: " << filePath;

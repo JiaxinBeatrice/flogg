@@ -238,6 +238,11 @@ void Configuration::retrieveFromStorage( QSettings& settings )
     verifySslPeers_
         = settings.value( "net.verifySslPeers", DefaultConfiguration.verifySslPeers_ ).toBool();
 
+    robustOpenContainingFolder_ = settings
+                                      .value( "debug.robustOpenContainingFolder",
+                                              DefaultConfiguration.robustOpenContainingFolder_ )
+                                      .toBool();
+
     // View settings
     overviewVisible_
         = settings.value( "view.overviewVisible", DefaultConfiguration.overviewVisible_ ).toBool();
@@ -379,6 +384,8 @@ void Configuration::saveToStorage( QSettings& settings ) const
     settings.setValue( "perf.optimizeForNotLatinEncodings", optimizeForNotLatinEncodings_ );
 
     settings.setValue( "net.verifySslPeers", verifySslPeers_ );
+
+    settings.setValue( "debug.robustOpenContainingFolder", robustOpenContainingFolder_ );
 
     settings.setValue( "view.overviewVisible", overviewVisible_ );
     settings.setValue( "view.lineNumbersVisibleInMain", lineNumbersVisibleInMain_ );

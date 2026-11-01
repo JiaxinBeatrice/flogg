@@ -217,6 +217,10 @@ class WindowSession {
         return windowIndex_;
     }
 
+    // Name given to the window by the user, kept in the session
+    QString displayName() const;
+    void setDisplayName( const QString& name );
+
     // Open all the files listed in the stored session
     // (see ::open)
     // returns a vector of pairs (file_name, view) and the index of the

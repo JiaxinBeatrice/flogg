@@ -101,6 +101,7 @@
 #include "filterpanel.h"
 #include "persistentinfo.h"
 #include "progress.h"
+#include "revealfile.h"
 #include "readablesize.h"
 #include "recentfiles.h"
 #include "sessioninfo.h"
@@ -237,9 +238,69 @@ MainWindow::MainWindow( WindowSession session )
 
     setupFilterPanel();
 
-    updateTitleBar( "" );
+    adoptEndpoint( std::make_unique<WindowEndpoint>() );
     loadIcons();
     reTranslateUI();
+}
+
+bool MainWindow::setDisplayName( const QString& name )
+{
+    const auto normalized = WindowEndpoint::normalizedName( name );
+    if ( normalized.isEmpty() ) {
+        endpoint_->release();
+    }
+    else if ( !endpoint_->claim( normalized ) ) {
+        return false;
+    }
+
+    session_.setDisplayName( endpoint_->name() );
+    updateTitleBar( titleFileName_ );
+    return true;
+}
+
+QString MainWindow::displayName() const
+{
+    return endpoint_->name();
+}
+
+void MainWindow::adoptEndpoint( std::unique_ptr<WindowEndpoint> endpoint )
+{
+    endpoint_ = std::move( endpoint );
+    connect( endpoint_.get(), &WindowEndpoint::filesReceived, this, &MainWindow::openReceivedFiles,
+             Qt::QueuedConnection );
+
+    // The constructor adopts an unnamed endpoint, the saved name is restored after it
+    if ( !endpoint_->name().isEmpty() ) {
+        session_.setDisplayName( endpoint_->name() );
+    }
+    updateTitleBar( titleFileName_ );
+}
+
+void MainWindow::openReceivedFiles( const QStringList& files, bool followFile )
+{
+    // Closed after the files were sent
+    if ( endpoint_->name().isEmpty() ) {
+        return;
+    }
+
+    for ( const auto& file : files ) {
+        loadFile( file, followFile );
+    }
+    bringToFront();
+}
+
+void MainWindow::renameWindow()
+{
+    bool accepted = false;
+    const auto name = QInputDialog::getText( this, tr( "Rename window" ),
+                                             tr( "Window name (empty to remove it):" ),
+                                             QLineEdit::Normal, displayName(), &accepted );
+
+    if ( accepted && !setDisplayName( name ) ) {
+        QMessageBox::warning( this, tr( "Rename window" ),
+                              tr( "Another flogg window is already named \"%1\"." )
+                                  .arg( WindowEndpoint::normalizedName( name ) ) );
+    }
 }
 
 void MainWindow::reloadGeometry()
@@ -252,6 +313,12 @@ void MainWindow::reloadGeometry()
 
 void MainWindow::reloadSession()
 {
+    const auto savedName = session_.displayName();
+    if ( !savedName.isEmpty() && !endpoint_->claim( savedName ) ) {
+        LOG_WARNING << "Window name " << savedName << " is in use";
+    }
+    updateTitleBar( titleFileName_ );
+
     const auto& config = Configuration::get();
     const auto followFileOnLoad = config.followFileOnLoad() && config.anyFileWatchEnabled();
 
@@ -318,6 +385,8 @@ void MainWindow::reTranslateUI()
     };
     newWindowAction->setText( transAction( action::newWindowText ) );
     newWindowAction->setStatusTip( transAction( action::newWindowStatusTip ) );
+    renameWindowAction->setText( transAction( action::renameWindowText ) );
+    renameWindowAction->setStatusTip( transAction( action::renameWindowStatusTip ) );
 
     openAction->setText( transAction( action::openText ) );
     openAction->setStatusTip( transAction( action::openStatusTip ) );
@@ -457,6 +526,10 @@ void MainWindow::createActions()
     newWindowAction->setStatusTip( tr( action::newWindowStatusTip ) );
     connect( newWindowAction, &QAction::triggered, [ = ] { Q_EMIT newWindow(); } );
     newWindowAction->setVisible( config.allowMultipleWindows() );
+
+    renameWindowAction = new QAction( tr( action::renameWindowText ), this );
+    renameWindowAction->setStatusTip( tr( action::renameWindowStatusTip ) );
+    connect( renameWindowAction, &QAction::triggered, this, &MainWindow::renameWindow );
 
     openAction = new QAction( tr( action::openText ), this );
     openAction->setStatusTip( tr( action::openStatusTip ) );
@@ -731,6 +804,7 @@ void MainWindow::createMenus()
     fileMenu = menuBar()->addMenu( tr( menu::fileTitle ) );
     fileMenu->setToolTipsVisible( true );
     fileMenu->addAction( newWindowAction );
+    fileMenu->addAction( renameWindowAction );
     fileMenu->addAction( openAction );
     fileMenu->addAction( openClipboardAction );
     fileMenu->addAction( openUrlAction );
@@ -1081,7 +1155,7 @@ void MainWindow::copyFullPath()
 
 void MainWindow::openContainingFolder()
 {
-    showPathInFileExplorer( session_.getFilename( currentCrawlerWidget() ) );
+    openFolderOfFile( this, session_.getFilename( currentCrawlerWidget() ) );
 }
 
 void MainWindow::openInEditor()
@@ -1536,7 +1610,11 @@ void MainWindow::loadFileNonInteractive( const QString& file_name )
     LOG_DEBUG << "loadFileNonInteractive( " << file_name.toStdString() << " )";
 
     loadFile( file_name );
+    bringToFront();
+}
 
+void MainWindow::bringToFront()
+{
     // Try to get the window to the front
     // This is a bit of a hack but has been tested on:
     // Qt 5.3 / Gnome / Linux
@@ -1597,6 +1675,8 @@ void MainWindow::closeEvent( QCloseEvent* event )
 
         closeAll( ActionInitiator::App );
         trayIcon_->hide();
+        // The object stays around after the window is closed
+        endpoint_->release();
         Q_EMIT windowClosed();
 
         event->accept();
@@ -1862,13 +1942,18 @@ CrawlerWidget* MainWindow::currentCrawlerWidget() const
 // Update the title bar.
 void MainWindow::updateTitleBar( const QString& file_name )
 {
+    titleFileName_ = file_name;
+
     QString shownName = tr( "Untitled" );
     if ( !file_name.isEmpty() ) {
         shownName = strippedName( file_name );
     }
 
     QString indexPart = "";
-    if ( session_.windowIndex() > 0 ) {
+    if ( !displayName().isEmpty() ) {
+        shownName = displayName() + " - " + shownName;
+    }
+    else if ( session_.windowIndex() > 0 ) {
         indexPart = QString( " #%1" ).arg( session_.windowIndex() + 1 );
     }
 

@@ -23,6 +23,8 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/recentfiles.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/savedsearches.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/selection.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/windowendpoint.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/revealfile.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/session.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/sessioninfo.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/signalmux.h
@@ -66,6 +68,8 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/recentfiles.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/savedsearches.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/selection.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/windowendpoint.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/revealfile.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/session.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/sessioninfo.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signalmux.cpp
@@ -105,6 +109,7 @@ target_link_libraries(
          project_warnings
          klogg_logdata
          klogg_karchive
+         Qt${QT_VERSION_MAJOR}::Network
          Qt${QT_VERSION_MAJOR}::Widgets
          Qt${QT_VERSION_MAJOR}::Xml
 )

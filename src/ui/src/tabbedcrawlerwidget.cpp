@@ -37,6 +37,7 @@
 #include "iconloader.h"
 #include "log.h"
 #include "openfilehelper.h"
+#include "revealfile.h"
 #include "shortcuts.h"
 #include "styles.h"
 #include "tabnamemapping.h"
@@ -269,7 +270,7 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
              [ this, tab ] { sendTextToClipboard( tabToolTip( tab ) ); } );
 
     connect( openContainingFolder, &QAction::triggered, this,
-             [ this, tab ] { showPathInFileExplorer( tabToolTip( tab ) ); } );
+             [ this, tab ] { openFolderOfFile( this, tabToolTip( tab ) ); } );
 
     connect( renameTab, &QAction::triggered, this, [ this, tab ] {
         bool isNameEntered = false;

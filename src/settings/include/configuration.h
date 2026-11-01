@@ -373,6 +373,16 @@ class Configuration final : public Persistable<Configuration> {
         verifySslPeers_ = verify;
     }
 
+    // Debug switch, to compare both ways of opening the folder of a file on Windows
+    bool robustOpenContainingFolder() const
+    {
+        return robustOpenContainingFolder_;
+    }
+    void setRobustOpenContainingFolder( bool enabled )
+    {
+        robustOpenContainingFolder_ = enabled;
+    }
+
     bool forceFontAntialiasing() const
     {
         return forceFontAntialiasing_;
@@ -554,6 +564,8 @@ class Configuration final : public Persistable<Configuration> {
     bool extractArchivesAlways_ = false;
 
     bool verifySslPeers_ = true;
+
+    bool robustOpenContainingFolder_ = false;
 
     bool forceFontAntialiasing_ = false;
     bool enableQtHighDpi_ = true;

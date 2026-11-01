@@ -176,6 +176,28 @@ int main( int argc, char* argv[] )
     logging::enableLogging( parameters.enable_logging || config.enableLogging(), logLevel );
     logging::enableFileLogging( parameters.log_to_file || config.enableLogging(), logLevel );
 
+    // Called from scripts: no dialog, the exit code tells what happened
+    std::unique_ptr<WindowEndpoint> windowEndpoint;
+    if ( parameters.window_requested ) {
+        QStringList files;
+        for ( const auto& filename : parameters.filenames ) {
+            files.append( filename );
+        }
+
+        windowEndpoint = std::make_unique<WindowEndpoint>();
+        switch ( windowEndpoint->claimOrForward( parameters.window_name, files,
+                                                 parameters.follow_file ) ) {
+        case WindowEndpoint::Route::Forwarded:
+            return EXIT_SUCCESS;
+        case WindowEndpoint::Route::Failed:
+            std::cerr << "Can't open in window \"" << parameters.window_name.toStdString()
+                      << "\"" << std::endl;
+            return EXIT_FAILURE;
+        case WindowEndpoint::Route::Claimed:
+            break;
+        }
+    }
+
     app.initCrashHandler();
 
     auto maxConcurrency
@@ -214,7 +236,8 @@ int main( int argc, char* argv[] )
 
         MainWindow* mw = nullptr;
         if ( parameters.load_session
-             || ( parameters.filenames.empty() && !parameters.new_session
+             || ( parameters.filenames.empty() && !parameters.window_requested
+                  && !parameters.new_session
                   && config.loadLastSession() && !app.isSecondary() ) ) {
             mw = app.reloadSession();
         }
@@ -226,6 +249,10 @@ int main( int argc, char* argv[] )
 
         if ( parameters.window_width > 0 && parameters.window_height > 0 ) {
             mw->resize( parameters.window_width, parameters.window_height );
+        }
+
+        if ( windowEndpoint ) {
+            mw->adoptEndpoint( std::move( windowEndpoint ) );
         }
 
         for ( const auto& filename : parameters.filenames ) {

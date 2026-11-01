@@ -82,6 +82,7 @@ class SessionInfo : public Persistable<SessionInfo, session_settings> {
 
         QString id;
         QByteArray geometry;
+        QString name;
         std::vector<OpenFile> openFiles;
     };
 
@@ -138,6 +139,21 @@ class SessionInfo : public Persistable<SessionInfo, session_settings> {
         auto window = findWindow( windowId );
         if ( window ) {
             window->geometry = geometry;
+        }
+    }
+
+    // Name given to the window by the user, empty if none
+    QString name( const QString& windowId ) const
+    {
+        auto window = findWindow( windowId );
+        return window ? window->name : QString{};
+    }
+
+    void setName( const QString& windowId, const QString& name )
+    {
+        auto window = findWindow( windowId );
+        if ( window ) {
+            window->name = name;
         }
     }
 
