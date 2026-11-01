@@ -19,11 +19,13 @@
 
 #include <catch2/catch.hpp>
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QPushButton>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include "configuration.h"
 #include "openfilehelper.h"
@@ -120,6 +122,15 @@ TEST_CASE( "The options dialog changes the robust folder opening setting", "[rev
     REQUIRE_FALSE( checkBox->isChecked() );
 
     checkBox->setChecked( true );
+
+    // With new settings Apply asks for a restart, and nobody is there to answer
+    QTimer answer;
+    QObject::connect( &answer, &QTimer::timeout, [] {
+        if ( auto* box = QApplication::activeModalWidget() ) {
+            box->close();
+        }
+    } );
+    answer.start( 10 );
     dialog.findChild<QDialogButtonBox*>()->button( QDialogButtonBox::Apply )->click();
 
     REQUIRE( Configuration::getSynced().robustOpenContainingFolder() );
