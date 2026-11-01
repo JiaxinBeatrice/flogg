@@ -84,6 +84,8 @@ class TabbedCrawlerWidget : public QTabWidget {
     void setTabDataStatus( int index, DataStatus status );
 
     void loadIcons();
+    // Marks the tabs using the shared filters
+    void updateSharedMarks();
     void updateIcon( int index );
 
   private Q_SLOTS:
@@ -91,6 +93,7 @@ class TabbedCrawlerWidget : public QTabWidget {
 
   private:
     QIcon olddata_icon_;
+    QIcon shared_icon_;
     QIcon newdata_icon_;
     QIcon newfiltered_icon_;
 

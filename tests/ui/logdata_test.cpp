@@ -271,3 +271,28 @@ SCENARIO( "Attaching log data to files", "[logdata]" )
 }
 
 #include "logdata_test.moc"
+
+TEST_CASE( "Logdata follows a file still open elsewhere", "[logdata]" )
+{
+    QTemporaryFile file{ "testshared_XXXXXX" };
+    REQUIRE( file.open() );
+    writeDataToFile( file );
+    const auto path = QFileInfo{ file }.absoluteFilePath();
+
+    LogData logData;
+    SafeQSignalSpy finishedSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    logData.attachFile( path );
+    REQUIRE( finishedSpy.safeWait() );
+
+    // The same file in another window, closed again
+    {
+        LogData other;
+        SafeQSignalSpy otherFinishedSpy( &other, SIGNAL( loadingFinished( LoadingStatus ) ) );
+        other.attachFile( path );
+        REQUIRE( otherFinishedSpy.safeWait() );
+    }
+
+    // Still watched for the first one
+    writeDataToFile( file, 200 );
+    REQUIRE( waitUiState( [ &logData ] { return logData.getNbLine() == 400_lcount; } ) );
+}

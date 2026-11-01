@@ -48,6 +48,7 @@
 #include <exception>
 
 #include <iterator>
+#include <utility>
 #include <qaction.h>
 #include <qapplication.h>
 
@@ -236,6 +237,9 @@ MainWindow::MainWindow( WindowSession session )
     setCentralWidget( central_widget );
 
     setupFilterPanel();
+    // Queued: tabs stop using the shared filters while the window is destroyed
+    connect( &SharedFilters::instance(), &SharedFilters::usersChanged, this,
+             &MainWindow::refreshTitleBar, Qt::QueuedConnection );
 
     updateTitleBar( "" );
     loadIcons();
@@ -252,6 +256,8 @@ void MainWindow::reloadGeometry()
 
 void MainWindow::reloadSession()
 {
+    setWindowName( session_.restoreName() );
+
     const auto& config = Configuration::get();
     const auto followFileOnLoad = config.followFileOnLoad() && config.anyFileWatchEnabled();
 
@@ -456,7 +462,6 @@ void MainWindow::createActions()
     newWindowAction = new QAction( tr( action::newWindowText ), this );
     newWindowAction->setStatusTip( tr( action::newWindowStatusTip ) );
     connect( newWindowAction, &QAction::triggered, [ = ] { Q_EMIT newWindow(); } );
-    newWindowAction->setVisible( config.allowMultipleWindows() );
 
     openAction = new QAction( tr( action::openText ), this );
     openAction->setStatusTip( tr( action::openStatusTip ) );
@@ -794,6 +799,10 @@ void MainWindow::createMenus()
     favoritesMenu = menuBar()->addMenu( tr( menu::favoritesTitle ) );
     favoritesMenu->setToolTipsVisible( true );
 
+    windowMenu = menuBar()->addMenu( tr( "&Window" ) );
+    connect( windowMenu, &QMenu::aboutToShow, this, &MainWindow::updateWindowMenu );
+    updateWindowMenu();
+
     helpMenu = menuBar()->addMenu( tr( menu::helpTitle ) );
     helpMenu->addAction( showDocumentationAction );
     helpMenu->addSeparator();
@@ -1029,11 +1038,21 @@ void MainWindow::closeTab( ActionInitiator initiator )
 // Close all tabs
 void MainWindow::closeAll( ActionInitiator initiator )
 {
+    // Asked once for all the tabs
+    if ( initiator == ActionInitiator::User && !filtersConfirmed_
+         && !confirmFiltersClose( crawlers(),
+                                  tr( "Closing all tabs: these filters have unsaved changes." ) ) ) {
+        return;
+    }
+
+    const auto wasConfirmed = filtersConfirmed_;
+    filtersConfirmed_ = true;
     while ( mainTabWidget_.count() ) {
         if ( !closeTab( 0, initiator ) ) {
             break;
         }
     }
+    filtersConfirmed_ = wasConfirmed;
 }
 
 // Select all the text in the currently selected view
@@ -1134,6 +1153,8 @@ void MainWindow::options()
     signalMux_.connect( &dialog, SIGNAL( optionsChanged() ), SLOT( applyConfiguration() ) );
 
     connect( &dialog, &OptionsDialog::optionsChanged, this, &MainWindow::applyOptions );
+    connect( &dialog, &OptionsDialog::optionsChanged, this,
+             [ this ] { applyOptionsToOtherWindows( false ); } );
     dialog.exec();
 
     signalMux_.disconnect( &dialog, SIGNAL( optionsChanged() ), SLOT( applyConfiguration() ) );
@@ -1145,7 +1166,6 @@ void MainWindow::applyOptions()
     logging::enableFileLogging( config.enableLogging(),
                                 static_cast<logging::LogLevel>( config.loggingLevel() ) );
 
-    newWindowAction->setVisible( config.allowMultipleWindows() );
     followAction->setEnabled( config.anyFileWatchEnabled() );
 
     updateShortcuts();
@@ -1235,6 +1255,7 @@ void MainWindow::importSettings()
 
     applyOptions();
     Q_EMIT optionsChanged();
+    applyOptionsToOtherWindows( true );
 
     QMessageBox::information(
         this, tr( "Import settings" ),
@@ -1468,11 +1489,15 @@ bool MainWindow::closeTab( int index, ActionInitiator initiator )
 
     assert( widget );
 
-    if ( initiator == ActionInitiator::User && !confirmFiltersClose( widget ) ) {
+    if ( initiator == ActionInitiator::User && !filtersConfirmed_
+         && !confirmFiltersClose(
+             { widget }, tr( "Closing %1: these filters have unsaved changes." )
+                             .arg( QFileInfo( session_.getFilename( widget ) ).fileName() ) ) ) {
         return false;
     }
 
     widget->stopLoading();
+    SharedFilters::instance().setUser( widget, false );
     mainTabWidget_.removeCrawler( index );
 
     if ( initiator == ActionInitiator::User ) {
@@ -1536,7 +1561,11 @@ void MainWindow::loadFileNonInteractive( const QString& file_name )
     LOG_DEBUG << "loadFileNonInteractive( " << file_name.toStdString() << " )";
 
     loadFile( file_name );
+    bringToFront();
+}
 
+void MainWindow::bringToFront()
+{
     // Try to get the window to the front
     // This is a bit of a hack but has been tested on:
     // Qt 5.3 / Gnome / Linux
@@ -1579,13 +1608,17 @@ void MainWindow::loadFileNonInteractive( const QString& file_name )
 // Closes the application
 void MainWindow::closeEvent( QCloseEvent* event )
 {
+    const auto filtersConfirmed = std::exchange( filtersConfirmed_, false );
     if ( !isCloseFromTray_ && this->isVisible() && Configuration::get().minimizeToTray() ) {
         event->ignore();
         trayIcon_->show();
         this->hide();
     }
     else {
-        if ( !confirmAllFiltersClose() ) {
+        if ( !filtersConfirmed
+             && !confirmFiltersClose(
+                 crawlers(), tr( "Closing this window: these filters have unsaved changes." ),
+                 true ) ) {
             event->ignore();
             return;
         }
@@ -1764,14 +1797,15 @@ bool MainWindow::loadFile( const QString& fileName, bool followFile )
 {
     LOG_DEBUG << "loadFile ( " << fileName.toStdString() << " )";
 
-    // First check if the file is already open...
-    auto* existing_crawler = static_cast<CrawlerWidget*>( session_.getViewIfOpen( fileName ) );
-
-    if ( existing_crawler ) {
-        auto* crawlerWindow = qobject_cast<MainWindow*>( existing_crawler->window() );
-        crawlerWindow->mainTabWidget_.setCurrentWidget( existing_crawler );
-        crawlerWindow->activateWindow();
-        return true;
+    // First check if the file is already open in this window, another window opens it
+    // in a tab of its own
+    for ( int i = 0; i < mainTabWidget_.count(); ++i ) {
+        auto* crawler = mainTabWidget_.widget( i );
+        if ( session_.getFilename( qobject_cast<CrawlerWidget*>( crawler ) ) == fileName ) {
+            mainTabWidget_.setCurrentIndex( i );
+            activateWindow();
+            return true;
+        }
     }
 
     const auto decompressAction = Decompressor::action( fileName );
@@ -1859,11 +1893,143 @@ CrawlerWidget* MainWindow::currentCrawlerWidget() const
     return current;
 }
 
+void MainWindow::setWindowName( const QString& name )
+{
+    windowName_ = name.trimmed();
+    refreshTitleBar();
+}
+
+void MainWindow::renameWindow()
+{
+    bool ok = false;
+    const auto name = QInputDialog::getText(
+        this, tr( "Rename window" ),
+        tr( "Window name (shown in the title instead of the file name, empty for the file "
+            "name):" ),
+        QLineEdit::Normal, windowName_, &ok );
+    if ( ok ) {
+        setWindowName( name );
+    }
+}
+
+void MainWindow::runCommand( const WindowCommand& command )
+{
+    // The shared filters get the filter options once, not once per tab
+    auto sharedDone = false;
+    const auto applyToCurrentTab = [ & ] {
+        // Shared filters started here are a copy of the filters the tab keeps, the filter
+        // file replaces them without asking
+        auto seeded = false;
+        if ( command.sharedFilters ) {
+            seeded = !SharedFilters::instance().isInitialized();
+            filterPanel_->setSharedMode( true );
+        }
+        if ( !filterPanel_->isSharedMode() || !sharedDone ) {
+            if ( !command.filtersFile.isEmpty() ) {
+                filterPanel_->openFiltersFile( command.filtersFile, !seeded );
+            }
+            if ( !command.addedFilters.empty() ) {
+                filterPanel_->appendFilters( command.addedFilters );
+            }
+            sharedDone = filterPanel_->isSharedMode();
+        }
+        auto* crawler = currentCrawlerWidget();
+        if ( command.line > 0 && crawler ) {
+            crawler->selectLineWhenLoaded(
+                LineNumber( static_cast<LineNumber::UnderlyingType>( command.line - 1 ) ) );
+        }
+    };
+
+    if ( command.files.empty() ) {
+        applyToCurrentTab();
+    }
+    for ( const auto& file : command.files ) {
+        if ( loadFile( file, command.follow ) ) {
+            applyToCurrentTab();
+        }
+    }
+}
+
+std::vector<MainWindow::TabInfo> MainWindow::tabInfos() const
+{
+    std::vector<TabInfo> tabs;
+    for ( int i = 0; i < mainTabWidget_.count(); ++i ) {
+        const auto* crawler = qobject_cast<const CrawlerWidget*>( mainTabWidget_.widget( i ) );
+        TabInfo tab;
+        tab.file = session_.getFilename( crawler );
+        tab.current = i == mainTabWidget_.currentIndex();
+        if ( crawler == filterTab_ ) {
+            tab.sharedFilters = filterPanel_->isSharedMode();
+            tab.filtersFile = filterPanel_->currentFile();
+        }
+        else {
+            const auto& state = crawler->filterTabState();
+            tab.sharedFilters = state.shared;
+            tab.filtersFile
+                = state.shared ? SharedFilters::instance().state().file : state.file;
+        }
+        tabs.push_back( std::move( tab ) );
+    }
+    return tabs;
+}
+
+// Lists every window of flogg, built when the menu is shown
+void MainWindow::updateWindowMenu()
+{
+    windowMenu->clear();
+    windowMenu->addAction( tr( "Rename window..." ), this, &MainWindow::renameWindow );
+    windowMenu->addAction( newWindowAction );
+    windowMenu->addSeparator();
+
+    std::vector<MainWindow*> windows;
+    for ( auto* widget : QApplication::topLevelWidgets() ) {
+        auto* window = qobject_cast<MainWindow*>( widget );
+        if ( window && window->isVisible() ) {
+            windows.push_back( window );
+        }
+    }
+    std::sort( windows.begin(), windows.end(), []( const auto* lhs, const auto* rhs ) {
+        return lhs->windowNumber() < rhs->windowNumber();
+    } );
+
+    for ( auto* window : windows ) {
+        auto* action = windowMenu->addAction(
+            QString( "#%1  %2" ).arg( window->windowNumber() ).arg( window->windowTitle() ) );
+        action->setCheckable( true );
+        action->setChecked( window == this );
+        connect( action, &QAction::triggered, window, [ window ] {
+            if ( window->isMinimized() ) {
+                window->showNormal();
+            }
+            window->raise();
+            window->activateWindow();
+        } );
+    }
+}
+
+void MainWindow::applyOptionsToOtherWindows( bool reloadFilterSettings )
+{
+    for ( auto* widget : QApplication::topLevelWidgets() ) {
+        auto* window = qobject_cast<MainWindow*>( widget );
+        if ( !window || window == this ) {
+            continue;
+        }
+        if ( reloadFilterSettings ) {
+            window->filterPanel_->reloadSettings();
+        }
+        window->applyOptions();
+        Q_EMIT window->optionsChanged();
+    }
+}
+
 // Update the title bar.
 void MainWindow::updateTitleBar( const QString& file_name )
 {
     QString shownName = tr( "Untitled" );
-    if ( !file_name.isEmpty() ) {
+    if ( !windowName_.isEmpty() ) {
+        shownName = windowName_;
+    }
+    else if ( !file_name.isEmpty() ) {
         shownName = strippedName( file_name );
     }
 
@@ -1872,8 +2038,24 @@ void MainWindow::updateTitleBar( const QString& file_name )
         indexPart = QString( " #%1" ).arg( session_.windowIndex() + 1 );
     }
 
+    // A window using the shared filters shows the link of their icon, the title is text only
+    const auto& sharedFilters = SharedFilters::instance();
+    auto shared = filterPanel_ && sharedFilters.isUser( filterPanel_ );
+    for ( int i = 0; i < mainTabWidget_.count() && !shared; ++i ) {
+        shared = sharedFilters.isUser( mainTabWidget_.widget( i ) );
+    }
+    if ( shared ) {
+        shownName = QString::fromUtf8( "\xF0\x9F\x94\x97 " ) + shownName;
+    }
+
     setWindowTitle( tr( "%1 - %2%3" ).arg( shownName, tr( "flogg" ), indexPart ) + tr( " (build " )
                     + kloggVersion() + ")" );
+}
+
+void MainWindow::refreshTitleBar()
+{
+    const auto* crawler = currentCrawlerWidget();
+    updateTitleBar( crawler ? session_.getFilename( crawler ) : QString{} );
 }
 
 void MainWindow::addRecentFile( const QString& fileName )
@@ -2230,7 +2412,7 @@ void MainWindow::writeSettings()
         auto view = qobject_cast<const CrawlerWidget*>( mainTabWidget_.widget( i ) );
         widget_list.emplace_back( view, 0UL, view->context() );
     }
-    session_.save( widget_list, saveGeometry() );
+    session_.save( widget_list, saveGeometry(), windowName_ );
 
     PersistentInfo::getSettings( app_settings{} ).setValue( "filterPanel/windowState",
                                                             saveState() );
@@ -2293,46 +2475,124 @@ void MainWindow::switchFilterTab( CrawlerWidget* crawler )
         filterTab_->setFilterTabState( filterPanel_->tabState() );
     }
     filterTab_ = crawler;
+    filterPanel_->setTab( crawler );
 
     // Filters set up while no file was open go to the first file opened
     if ( crawler && !hadTab && !crawler->filterTabState().initialized ) {
+        SharedFilters::instance().setUser( crawler, filterPanel_->isSharedMode() );
         return;
     }
 
     filterPanel_->setTabState( crawler ? crawler->filterTabState() : FilterTabState{} );
 }
 
-bool MainWindow::confirmFiltersClose( CrawlerWidget* crawler )
+std::vector<CrawlerWidget*> MainWindow::crawlers() const
 {
-    if ( !filterPanel_ ) {
-        return true;
-    }
-
-    if ( crawler != filterTab_ ) {
-        if ( !FilterPanel::isModified( crawler->filterTabState() ) ) {
-            return true;
+    std::vector<CrawlerWidget*> crawlers;
+    for ( int i = 0; i < mainTabWidget_.count(); ++i ) {
+        if ( auto* crawler = qobject_cast<CrawlerWidget*>( mainTabWidget_.widget( i ) ) ) {
+            crawlers.push_back( crawler );
         }
-        // Show the tab the question is about
-        mainTabWidget_.setCurrentWidget( crawler );
     }
-
-    return filterPanel_->confirmClose(
-        QFileInfo( session_.getFilename( crawler ) ).fileName() );
+    return crawlers;
 }
 
-bool MainWindow::confirmAllFiltersClose()
+std::vector<UnsavedFilters> MainWindow::unsavedFilters( const std::vector<CrawlerWidget*>& tabs,
+                                                        bool closingWindow, bool closingAll )
 {
-    if ( mainTabWidget_.count() == 0 ) {
-        return !filterPanel_ || filterPanel_->confirmClose( {} );
+    std::vector<UnsavedFilters> filters;
+    if ( !filterPanel_ ) {
+        return filters;
     }
+    filterPanel_->flushChange();
 
-    for ( int i = 0; i < mainTabWidget_.count(); ++i ) {
-        auto* crawler = qobject_cast<CrawlerWidget*>( mainTabWidget_.widget( i ) );
-        if ( crawler && !confirmFiltersClose( crawler ) ) {
-            return false;
+    auto usesShared = false;
+    // The filters shown in the panel, of the tab shown or of the window without tab
+    const auto addShown = [ & ]( const QString& tabName ) {
+        auto* panel = filterPanel_;
+        if ( panel->isSharedMode() ) {
+            usesShared = true;
+            if ( panel->isPrivateModified() ) {
+                filters.push_back( { tr( "Filters of %1 (hidden while shared)" ).arg( tabName ),
+                                     panel->tabState().file, false,
+                                     [ panel, tabName ] {
+                                         return panel->savePrivateFilters( tabName );
+                                     },
+                                     [ panel ] { panel->discardPrivateChanges(); } } );
+            }
+        }
+        else if ( panel->isModified() ) {
+            filters.push_back( { tr( "Filters of %1" ).arg( tabName ), panel->currentFile(),
+                                 false, [ panel ] { return panel->saveFile(); },
+                                 [ panel ] { panel->discardChanges(); } } );
+        }
+    };
+
+    for ( auto* crawler : tabs ) {
+        const auto tabName = QFileInfo( session_.getFilename( crawler ) ).fileName();
+        if ( crawler == filterTab_ ) {
+            addShown( tabName );
+            continue;
+        }
+
+        const auto& state = crawler->filterTabState();
+        usesShared = usesShared || state.shared;
+        if ( FilterPanel::isModified( state ) ) {
+            const auto name = state.shared ? tr( "Filters of %1 (hidden while shared)" )
+                                           : tr( "Filters of %1" );
+            filters.push_back(
+                { name.arg( tabName ), state.file, false,
+                  [ this, crawler = QPointer<CrawlerWidget>( crawler ), tabName ] {
+                      auto state = crawler->filterTabState();
+                      if ( !FilterPanel::saveState(
+                               state, this, tr( "Save filters of %1 as" ).arg( tabName ) ) ) {
+                          return false;
+                      }
+                      crawler->setFilterTabState( state );
+                      FilterFiles::instance().notifySaved( state.file, state.savedJson,
+                                                           crawler );
+                      return true;
+                  },
+                  [ crawler = QPointer<CrawlerWidget>( crawler ) ] {
+                      auto state = crawler->filterTabState();
+                      FilterPanel::discardChanges( state );
+                      crawler->setFilterTabState( state );
+                  } } );
         }
     }
-    return true;
+    if ( closingWindow && tabs.empty() ) {
+        addShown( tr( "this window" ) );
+    }
+
+    // The shared filters are only asked about when no tab left uses them
+    auto& sharedFilters = SharedFilters::instance();
+    const auto isClosing = [ & ]( const QWidget* user ) {
+        return closingAll || ( closingWindow && user->window() == this )
+               || std::find( tabs.begin(), tabs.end(), user ) != tabs.end();
+    };
+    if ( usesShared && FilterPanel::isModified( sharedFilters.state() )
+         && !sharedFilters.hasUsersLeft( isClosing ) ) {
+        auto* panel = filterPanel_;
+        filters.insert( filters.begin(),
+                        { tr( "Shared filters" ), sharedFilters.state().file, true,
+                          [ this, panel ] {
+                              return panel->isSharedMode() ? panel->saveFile()
+                                                           : SharedFilters::instance().save( this );
+                          },
+                          [] { SharedFilters::instance().discardChanges(); } } );
+    }
+    return filters;
+}
+
+std::vector<UnsavedFilters> MainWindow::unsavedFiltersOnExit()
+{
+    return unsavedFilters( crawlers(), true, true );
+}
+
+bool MainWindow::confirmFiltersClose( const std::vector<CrawlerWidget*>& tabs,
+                                      const QString& text, bool closingWindow )
+{
+    return confirmUnsavedFilters( this, text, unsavedFilters( tabs, closingWindow, false ) );
 }
 
 // Filters are applied lazily: background tabs get them when they become current

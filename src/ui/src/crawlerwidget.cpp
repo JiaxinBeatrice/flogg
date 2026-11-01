@@ -49,6 +49,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <utility>
 
 #include <QAction>
 #include <QApplication>
@@ -177,6 +178,12 @@ CrawlerWidget::CrawlerWidget( QWidget* parent )
     : QSplitter( parent )
     , iconLoader_{ this }
 {
+    // The filter file of the tab saved by another tab. While the tab is shown the filter
+    // panel follows instead, and this state is replaced when the tab is left.
+    connect( &FilterFiles::instance(), &FilterFiles::saved, this,
+             [ this ]( const QString& path, const QByteArray& json ) {
+                 FilterFiles::follow( filterTabState_, path, json );
+             } );
 }
 
 CrawlerWidget::~CrawlerWidget()
@@ -370,12 +377,32 @@ void CrawlerWidget::doSetViewContext( const QString& view_context )
     const auto& config = Configuration::get();
     logMainView_->followSet( context.followFile() && config.anyFileWatchEnabled() );
 
+    // Filters without unsaved changes are kept as their file only
+    const auto restoredRoot = []( const QVariant& root ) -> std::optional<FilterNode> {
+        if ( !root.isValid() ) {
+            return std::nullopt;
+        }
+        return filters::fromJson( QJsonObject::fromVariantMap( root.toMap() ) );
+    };
+
     const auto filters = context.filters();
     if ( !filters.isEmpty() ) {
-        filterTabState_ = FilterPanel::restoredTabState(
-            filters.value( "file" ).toString(),
-            filters::fromJson( QJsonObject::fromVariantMap( filters.value( "root" ).toMap() ) ) );
+        filterTabState_ = FilterPanel::restoredTabState( filters.value( "file" ).toString(),
+                                                         restoredRoot( filters.value( "root" ) ) );
         filterTabState_.collapsedGroups = filters.value( "collapsed" ).toStringList();
+
+        // Every shared tab keeps the shared filters in the session, the first one restored
+        // brings them back
+        filterTabState_.shared = filters.value( "shared" ).toBool();
+        auto& sharedFilters = SharedFilters::instance();
+        if ( filterTabState_.shared && !sharedFilters.isInitialized() ) {
+            auto shared = FilterPanel::restoredTabState(
+                filters.value( "sharedFile" ).toString(),
+                restoredRoot( filters.value( "sharedRoot" ) ) );
+            shared.copyOfFile = filters.value( "sharedCopy" ).toBool();
+            sharedFilters.setState( std::move( shared ), nullptr );
+        }
+        sharedFilters.setUser( this, filterTabState_.shared );
     }
 
     const auto savedMarks = context.marks();
@@ -387,9 +414,24 @@ std::shared_ptr<const ViewContextInterface> CrawlerWidget::doGetViewContext() co
 {
     QVariantMap filters;
     if ( filterTabState_.initialized ) {
+        // Unchanged filters are read from their file when restored: the file may be saved
+        // again before, kept filters would show as changed
         filters[ "file" ] = filterTabState_.file;
-        filters[ "root" ] = filters::toJson( filterTabState_.root ).toVariantMap();
+        if ( FilterPanel::isModified( filterTabState_ ) ) {
+            filters[ "root" ] = filters::toJson( filterTabState_.root ).toVariantMap();
+        }
         filters[ "collapsed" ] = filterTabState_.collapsedGroups;
+
+        const auto& sharedFilters = SharedFilters::instance();
+        if ( filterTabState_.shared && sharedFilters.isInitialized() ) {
+            filters[ "shared" ] = true;
+            filters[ "sharedFile" ] = sharedFilters.state().file;
+            filters[ "sharedCopy" ] = sharedFilters.state().copyOfFile;
+            if ( FilterPanel::isModified( sharedFilters.state() ) ) {
+                filters[ "sharedRoot" ]
+                    = filters::toJson( sharedFilters.state().root ).toVariantMap();
+            }
+        }
     }
 
     auto context = std::make_shared<const CrawlerWidgetContext>(
@@ -582,14 +624,27 @@ void CrawlerWidget::jumpToMatchingLine( LineNumber filteredLineNb, LinesCount nL
                                         LineColumn startCol, LineLength nSymbols )
 {
     const auto mainViewLine = logFilteredData_->getMatchingLineNumber( filteredLineNb );
+    selectingFromFiltered_ = true;
     logMainView_->selectPortionAndDisplayLine( mainViewLine, nLines, startCol,
                                                nSymbols ); // FIXME: should be done with a signal.
+    selectingFromFiltered_ = false;
 }
 
 void CrawlerWidget::updateLineNumberHandler( LineNumber line, LinesCount nLines,
                                              LineColumn startCol, LineLength nSymbols )
 {
     currentLineNumber_ = line;
+
+    // The filtered view follows the main view: the line is selected when it is
+    // in the filtered results, otherwise the closest result before it is shown.
+    // In follow mode it is not scrolled away from the end of the file.
+    // One bitmap rank per selection change, nothing is read from the file.
+    if ( !selectingFromFiltered_ && filteredView_ && logFilteredData_->getNbLine() > 0_lcount ) {
+        const auto index = logFilteredData_->getLineIndexNumber( line );
+        const auto isResult = logFilteredData_->getMatchingLineNumber( index ) == line;
+        filteredView_->followSelectionOf( index, isResult, !isFollowEnabled() );
+    }
+
     Q_EMIT newSelection( line, nLines, startCol, nSymbols );
 }
 
@@ -761,6 +816,10 @@ void CrawlerWidget::loadingFinishedHandler( LoadingStatus status )
             logFilteredData_->addMark( m );
         }
         logMainView_->setFocus();
+
+        if ( lineToSelect_ ) {
+            selectLineWhenLoaded( *std::exchange( lineToSelect_, std::nullopt ) );
+        }
 
         if ( filterMode_ ) {
             // Not right away: the search processes events, which can delete this widget
@@ -2105,6 +2164,23 @@ void CrawlerWidget::applyCompiledHighlighters()
     for ( const auto& view : filteredViewsData_ ) {
         view.first->applyCompiledHighlighterSet();
     }
+}
+
+void CrawlerWidget::setFilterTabState( FilterTabState state )
+{
+    filterTabState_ = std::move( state );
+    SharedFilters::instance().setUser( this, filterTabState_.shared );
+}
+
+void CrawlerWidget::selectLineWhenLoaded( LineNumber line )
+{
+    if ( !firstLoadDone_ ) {
+        lineToSelect_ = line;
+        return;
+    }
+
+    filteredView_->trySelectLine( logFilteredData_->getLineIndexNumber( line ) );
+    logMainView_->trySelectLine( line );
 }
 
 uint64_t CrawlerWidget::filtersRevision() const

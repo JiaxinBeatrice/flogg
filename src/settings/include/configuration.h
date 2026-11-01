@@ -165,14 +165,6 @@ class Configuration final : public Persistable<Configuration> {
     {
         followFileOnLoad_ = enabled;
     }
-    bool allowMultipleWindows() const
-    {
-        return allowMultipleWindows_;
-    }
-    void setAllowMultipleWindows( bool enabled )
-    {
-        allowMultipleWindows_ = enabled;
-    }
 
     // perf settings
     bool useParallelSearch() const
@@ -521,7 +513,6 @@ class Configuration final : public Persistable<Configuration> {
 
     bool loadLastSession_ = false;
     bool followFileOnLoad_ = false;
-    bool allowMultipleWindows_ = false;
 
     // View settings
     bool overviewVisible_ = true;

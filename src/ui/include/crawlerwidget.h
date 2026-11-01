@@ -126,10 +126,10 @@ class CrawlerWidget : public QSplitter,
     {
         return filterTabState_;
     }
-    void setFilterTabState( FilterTabState state )
-    {
-        filterTabState_ = std::move( state );
-    }
+    void setFilterTabState( FilterTabState state );
+
+    // Selects the line (and shows it) once the file is loaded
+    void selectLineWhenLoaded( LineNumber line );
 
     void addFiltersToSearch( const std::vector<FilterNode>& filters, FilterSearchMode mode );
 
@@ -465,6 +465,11 @@ class CrawlerWidget : public QSplitter,
     // should consider we are loading something.
     bool loadingInProgress_ = true;
     bool firstLoadDone_ = false;
+    std::optional<LineNumber> lineToSelect_;
+
+    // Set while the main view follows a selection made in the filtered view,
+    // so the filtered view does not follow it back.
+    bool selectingFromFiltered_ = false;
 
     klogg::vector<LineNumber> savedMarkedLines_;
 

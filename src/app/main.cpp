@@ -48,6 +48,8 @@
 #include <shellapi.h>
 #endif // _WIN32
 
+#include <cstdio>
+
 #include <mimalloc.h>
 #include <QStyleHints>
 
@@ -61,7 +63,6 @@
 
 #include "configuration.h"
 #include "logger.h"
-#include "filterpanel.h"
 #include "mainwindow.h"
 #include "persistentinfo.h"
 #include "styles.h"
@@ -120,6 +121,36 @@ void setApplicationAttributes( bool enableQtHdpi, int scaleFactorRounding )
     QCoreApplication::setAttribute( Qt::AA_DontShowIconsInMenus );
 }
 
+// flogg is a GUI application, on Windows it writes to the console it is started from unless
+// its output is redirected
+void printToConsole( const QString& text, bool isError )
+{
+    if ( text.isEmpty() ) {
+        return;
+    }
+
+#ifdef Q_OS_WIN
+    static const auto consoleReady = [] {
+        const auto handle = ::GetStdHandle( STD_OUTPUT_HANDLE );
+        if ( ( handle == nullptr || handle == INVALID_HANDLE_VALUE )
+             && ::AttachConsole( ATTACH_PARENT_PROCESS ) ) {
+            FILE* stream = nullptr;
+            freopen_s( &stream, "CONOUT$", "w", stdout );
+            freopen_s( &stream, "CONOUT$", "w", stderr );
+        }
+        return true;
+    }();
+    Q_UNUSED( consoleReady );
+#endif
+
+    auto* stream = isError ? stderr : stdout;
+    std::fputs( text.toLocal8Bit().constData(), stream );
+    if ( !text.endsWith( '\n' ) ) {
+        std::fputs( "\n", stream );
+    }
+    std::fflush( stream );
+}
+
 QStringList rawArguments( int argc, char* argv[] )
 {
     QStringList arguments;
@@ -166,9 +197,9 @@ int main( int argc, char* argv[] )
 
     MainWindow::installLanguage( config.language() );
     CliParameters parameters( app );
-
-    if ( !parameters.filters_file.isEmpty() ) {
-        FilterPanel::setStartupFile( parameters.filters_file );
+    if ( !parameters.error.isEmpty() ) {
+        printToConsole( "flogg: " + parameters.error, true );
+        return EXIT_FAILURE;
     }
 
     const auto logLevel
@@ -207,15 +238,57 @@ int main( int argc, char* argv[] )
         QThreadPool::globalInstance()->setMaxThreadCount( static_cast<int>( maxConcurrency ) );
     }
 
-    // Every start is a new instance (as with -m), the previous session is only restored by
-    // the first one
+    // A flogg started later with the same settings opens its window in the first one
+    // (unless -m), which also lists and changes its windows for the command line
+    const auto request = parameters.toRequest();
+    if ( !parameters.multi_instance ) {
+        app.startSingleInstance(
+            remote::instanceName( PersistentInfo::getSettings( app_settings{} ).fileName() ) );
+
+        if ( app.isSecondary() ) {
+            LOG_INFO << "Found another flogg, pid " << app.primaryPid();
+            if ( const auto reply = app.sendToPrimary( request ) ) {
+                if ( !( *reply )[ "ok" ].toBool() ) {
+                    printToConsole( "flogg: " + ( *reply )[ "error" ].toString(), true );
+                    return EXIT_FAILURE;
+                }
+                printToConsole( ( *reply )[ "output" ].toString(), false );
+                return EXIT_SUCCESS;
+            }
+
+            if ( parameters.targetsRunningInstance() ) {
+                printToConsole( "flogg: the running flogg does not answer", true );
+                return EXIT_FAILURE;
+            }
+            LOG_WARNING << "The running flogg does not answer, starting a separate one";
+        }
+    }
+
+    if ( parameters.targetsRunningInstance() ) {
+        if ( parameters.list_windows ) {
+            printToConsole( parameters.json ? "[]" : "", false );
+            return EXIT_SUCCESS;
+        }
+        printToConsole( "flogg: flogg is not running, there is no window " + parameters.window,
+                        true );
+        return EXIT_FAILURE;
+    }
+
+    QString commandError;
+    const auto command = KloggApp::readCommand( request, &commandError );
+    if ( !command ) {
+        printToConsole( "flogg: " + commandError, true );
+        return EXIT_FAILURE;
+    }
+
     {
         StyleManager::applyStyle( config.style() );
 
+        // The previous session is only restored by the primary instance
         MainWindow* mw = nullptr;
         if ( parameters.load_session
              || ( parameters.filenames.empty() && !parameters.new_session
-                  && config.loadLastSession() && !app.isSecondary() ) ) {
+                  && config.loadLastSession() && app.isPrimary() ) ) {
             mw = app.reloadSession();
         }
         else {
@@ -228,9 +301,11 @@ int main( int argc, char* argv[] )
             mw->resize( parameters.window_width, parameters.window_height );
         }
 
-        for ( const auto& filename : parameters.filenames ) {
-            mw->loadInitialFile( filename, parameters.follow_file );
-        }
+        KloggApp::runCommand( mw, request, *command );
+    }
+
+    if ( app.isPrimary() ) {
+        app.startControlServer();
     }
 
     return app.exec();

@@ -183,9 +183,6 @@ void Configuration::retrieveFromStorage( QSettings& settings )
                            .value( "session.restoreLastSession",
                                    DefaultConfiguration.loadLastSession_ )
                            .toBool();
-    allowMultipleWindows_
-        = settings.value( "session.multipleWindows", DefaultConfiguration.allowMultipleWindows_ )
-              .toBool();
     followFileOnLoad_
         = settings.value( "session.followOnLoad", DefaultConfiguration.followFileOnLoad_ ).toBool();
 
@@ -358,7 +355,6 @@ void Configuration::saveToStorage( QSettings& settings ) const
 
     settings.remove( "session.loadLast" );
     settings.setValue( "session.restoreLastSession", loadLastSession_ );
-    settings.setValue( "session.multipleWindows", allowMultipleWindows_ );
     settings.setValue( "session.followOnLoad", followFileOnLoad_ );
 
     settings.setValue( "logging.enableLogging", enableLogging_ );

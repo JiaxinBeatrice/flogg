@@ -22,10 +22,15 @@
 #include <chrono>
 #include <functional>
 
+#include <QAbstractButton>
 #include <QHeaderView>
+#include <QLabel>
+#include <QTabBar>
+#include <QMessageBox>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QApplication>
+#include <QDialogButtonBox>
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QTreeWidgetItemIterator>
@@ -55,6 +60,22 @@
 namespace {
 
 constexpr int NbLines = 30000;
+
+// Answers the question about unsaved filters shown (a message box or the list of the filters
+// lost when closing) with Discard, false when none is shown
+bool discardQuestion()
+{
+    auto* modal = QApplication::activeModalWidget();
+    if ( auto* box = qobject_cast<QMessageBox*>( modal ) ) {
+        box->button( QMessageBox::Discard )->click();
+        return true;
+    }
+    if ( modal && modal->objectName() == "unsavedFilters" ) {
+        modal->findChild<QDialogButtonBox*>()->button( QDialogButtonBox::Discard )->click();
+        return true;
+    }
+    return false;
+}
 
 void generateFile( QTemporaryFile& file )
 {
@@ -1701,4 +1722,786 @@ SCENARIO( "Main window operations with several big files", "[.timing]" )
     CHECK( tabs->count() == half - 1 );
 
     FilterPanel::setStartupFile( {} );
+}
+
+SCENARIO( "Filter panels share the filters of shared tabs", "[filters]" )
+{
+    QTemporaryDir dir;
+    auto root = FilterNode::makeGroup( "root" );
+    root.children.push_back( FilterNode::makeFilter( "ERROR" ) );
+    root.children.push_back( FilterNode::makeFilter( "WARN" ) );
+    const auto sharedFile = dir.filePath( "shared.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( root, sharedFile ) );
+
+    auto own = FilterNode::makeGroup( "root" );
+    own.children.push_back( FilterNode::makeFilter( "OWN" ) );
+    const auto ownFile = dir.filePath( "own.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", sharedFile );
+
+    auto& sharedFilters = SharedFilters::instance();
+    sharedFilters.clear();
+
+    // Two windows, each showing a tab
+    QWidget firstTab;
+    QWidget secondTab;
+    FilterPanel first;
+    FilterPanel second;
+    first.setTab( &firstTab );
+    second.setTab( &secondTab );
+    REQUIRE( second.openFiltersFile( ownFile ) );
+
+    // The first tab shared seeds the shared filters with its own ones, still with its file
+    REQUIRE( first.setSharedMode( true ) );
+    CHECK( sharedFilters.isInitialized() );
+    CHECK( sharedFilters.isUser( &firstTab ) );
+    CHECK( sharedFilters.state().root.children.size() == 2 );
+    CHECK( first.currentFile() == sharedFile );
+    CHECK_FALSE( first.isModified() );
+    CHECK( sharedFilters.state().copyOfFile );
+
+    // Their first change makes them untitled, saving them does not overwrite the tab file
+    first.appendFilters( { FilterNode::makeFilter( "COPY" ) } );
+    CHECK( first.currentFile().isEmpty() );
+    CHECK( first.isModified() );
+    CHECK_FALSE( sharedFilters.state().copyOfFile );
+    CHECK( filters::loadFromFile( sharedFile )->children.size() == 2 );
+
+    // Opened from a file instead (the untitled changes are dropped)
+    REQUIRE( first.openFiltersFile( sharedFile, false ) );
+    CHECK( sharedFilters.state().file == sharedFile );
+    CHECK_FALSE( first.isModified() );
+
+    // Another tab entering the shared mode shows them, with the same snapshot
+    QSignalSpy secondChanged( &second, &FilterPanel::filtersChanged );
+    REQUIRE( second.setSharedMode( true ) );
+    CHECK( secondChanged.count() == 1 );
+    CHECK( second.snapshot() == first.snapshot() );
+    CHECK( second.currentFile() == sharedFile );
+
+    // A change shows in the other panel right away, before it is saved
+    const auto revision = first.snapshot()->revision;
+    secondChanged.clear();
+    first.appendFilters( { FilterNode::makeFilter( "NEW" ) } );
+    CHECK( secondChanged.count() == 1 );
+    CHECK( second.snapshot() == first.snapshot() );
+    CHECK( second.snapshot()->filters.size() == 3 );
+    CHECK( second.snapshot()->revision != revision );
+    CHECK( second.isModified() );
+
+    // Saving in one panel saves for both
+    REQUIRE( QMetaObject::invokeMethod( &second, "saveFile" ) );
+    CHECK_FALSE( second.isModified() );
+    CHECK_FALSE( first.isModified() );
+    CHECK_FALSE( FilterPanel::isModified( sharedFilters.state() ) );
+    CHECK( filters::loadFromFile( sharedFile )->children.size() == 3 );
+
+    // The tab state keeps the own filters of the tab aside, they come from the file just
+    // saved and had no changes: they follow it
+    const auto firstState = first.tabState();
+    CHECK( firstState.shared );
+    CHECK( firstState.root.children.size() == 3 );
+
+    // Leaving the shared mode brings the own filters back, the other tab keeps sharing
+    REQUIRE( second.setSharedMode( false ) );
+    CHECK_FALSE( sharedFilters.isUser( &secondTab ) );
+    CHECK( second.currentFile() == ownFile );
+    REQUIRE( second.snapshot()->filters.size() == 1 );
+    CHECK( second.snapshot()->filters.front().pattern == "OWN" );
+    CHECK( first.snapshot()->filters.size() == 3 );
+
+    // Another tab shown in the first panel, then the shared one again
+    first.setTabState( FilterTabState{} );
+    CHECK_FALSE( first.isSharedMode() );
+    first.setTabState( firstState );
+    CHECK( first.isSharedMode() );
+    CHECK( first.snapshot()->filters.size() == 3 );
+
+    // Users in a window being closed do not count
+    CHECK( sharedFilters.hasOtherUsers( &secondTab ) );
+    CHECK_FALSE( sharedFilters.hasOtherUsers( &secondTab, &firstTab ) );
+
+    sharedFilters.clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "Main windows run command lines", "[filters]" )
+{
+    QTemporaryDir dir;
+    const auto log = dir.filePath( "command.log" );
+    {
+        QFile file( log );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        for ( int i = 1; i <= 100; ++i ) {
+            file.write( QByteArray( "a line " ) + QByteArray::number( i ) + '\n' );
+        }
+    }
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", dir.filePath( "none.flogg-filters.json" ) );
+    SharedFilters::instance().clear();
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession firstSession{ appSession, "Command1", 0 };
+    WindowSession secondSession{ appSession, "Command2", 1 };
+    MainWindow first( firstSession );
+    MainWindow second( secondSession );
+
+    // Fails the test instead of waiting for an answer
+    auto asked = false;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        if ( auto* dialog = QApplication::activeModalWidget() ) {
+            asked = true;
+            dialog->close();
+        }
+    } );
+    dialogCloser.start( 200 );
+
+    auto fileFilters = FilterNode::makeGroup( "root" );
+    fileFilters.children.push_back( FilterNode::makeFilter( "line 5" ) );
+    const auto filtersFile = dir.filePath( "command.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( fileFilters, filtersFile ) );
+
+    // The shared filters started by the command get the filter file without a question
+    WindowCommand command;
+    command.files = { log };
+    command.line = 42;
+    command.filtersFile = filtersFile;
+    command.addedFilters = { FilterNode::makeFilter( "line 4" ) };
+    command.sharedFilters = true;
+    first.runCommand( command );
+    CHECK_FALSE( asked );
+
+    // The same file in another window gets a tab of its own
+    WindowCommand secondCommand;
+    secondCommand.files = { log };
+    secondCommand.sharedFilters = true;
+    second.runCommand( secondCommand );
+
+    const auto firstTabs = first.tabInfos();
+    const auto secondTabs = second.tabInfos();
+    REQUIRE( firstTabs.size() == 1 );
+    REQUIRE( secondTabs.size() == 1 );
+    CHECK( firstTabs.front().file == log );
+    CHECK( firstTabs.front().sharedFilters );
+    CHECK( secondTabs.front().sharedFilters );
+
+    auto* firstPanel = first.findChild<FilterPanel*>();
+    auto* secondPanel = second.findChild<FilterPanel*>();
+    CHECK( firstPanel->snapshot() == secondPanel->snapshot() );
+    REQUIRE( secondPanel->snapshot()->filters.size() == 2 );
+    CHECK( secondPanel->snapshot()->filters.front().pattern == "line 5" );
+    CHECK( secondPanel->snapshot()->filters.back().pattern == "line 4" );
+    CHECK( secondPanel->currentFile() == filtersFile );
+
+    // Both windows and their tabs show that they use the shared filters
+    const auto link = QString::fromUtf8( "\xF0\x9F\x94\x97" );
+    const auto hasMark = []( MainWindow& window ) {
+        auto* tabBar = window.findChild<TabbedCrawlerWidget*>()->tabBar();
+        return qobject_cast<QLabel*>( tabBar->tabButton( 0, QTabBar::LeftSide ) )
+               || qobject_cast<QLabel*>( tabBar->tabButton( 0, QTabBar::RightSide ) );
+    };
+    QTest::qWait( 100 );
+    CHECK( first.windowTitle().startsWith( link ) );
+    CHECK( second.windowTitle().startsWith( link ) );
+    CHECK( hasMark( first ) );
+    CHECK( hasMark( second ) );
+
+    REQUIRE( secondPanel->setSharedMode( false ) );
+    QTest::qWait( 100 );
+    CHECK_FALSE( second.windowTitle().startsWith( link ) );
+    CHECK_FALSE( hasMark( second ) );
+    CHECK( first.windowTitle().startsWith( link ) );
+    REQUIRE( secondPanel->setSharedMode( true ) );
+
+    // The line is selected once the file is loaded
+    auto* crawler = qobject_cast<CrawlerWidget*>(
+        first.findChild<TabbedCrawlerWidget*>()->currentWidget() );
+    REQUIRE( waitUiState( [ & ] { return crawler->getSelectedText() == "a line 42"; } ) );
+
+    first.setWindowName( "wifi" );
+    CHECK( first.windowTitle().startsWith( link + " wifi - flogg" ) );
+
+    // The changed shared filters are still used by the other window: closing the tab does
+    // not ask to save them
+    auto* firstTabArea = first.findChild<TabbedCrawlerWidget*>();
+    Q_EMIT firstTabArea->tabCloseRequested( 0 );
+    QTest::qWait( 500 );
+    CHECK_FALSE( asked );
+    CHECK( firstTabArea->count() == 0 );
+    CHECK( SharedFilters::instance().hasOtherUsers( nullptr ) );
+
+    // The last tab using them asks
+    auto* secondTabArea = second.findChild<TabbedCrawlerWidget*>();
+    Q_EMIT secondTabArea->tabCloseRequested( 0 );
+    QTest::qWait( 500 );
+    CHECK( asked );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "Tabs using a filter file follow its saves", "[filters]" )
+{
+    QTemporaryDir dir;
+    auto root = FilterNode::makeGroup( "root" );
+    root.children.push_back( FilterNode::makeFilter( "ERROR" ) );
+    const auto filtersFile = dir.filePath( "common.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( root, filtersFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", filtersFile );
+
+    // Two windows on the same file, and a tab in the background without changes
+    FilterPanel first;
+    FilterPanel second;
+    auto background = first.tabState();
+    auto changedBackground = first.tabState();
+    changedBackground.root.children.push_back( FilterNode::makeFilter( "MINE" ) );
+    changedBackground.json.clear();
+
+    first.appendFilters( { FilterNode::makeFilter( "WARN" ) } );
+    REQUIRE( QMetaObject::invokeMethod( &first, "saveFile" ) );
+
+    // The panel without changes shows the saved filters
+    CHECK_FALSE( second.isModified() );
+    REQUIRE( second.snapshot()->filters.size() == 2 );
+    CHECK( second.snapshot()->filters.back().pattern == "WARN" );
+
+    // A tab in the background takes them when shown, one with changes keeps them
+    CHECK( FilterFiles::follow( background, filtersFile, first.tabState().savedJson ) );
+    CHECK( background.root.children.size() == 2 );
+    CHECK_FALSE( background.snapshot );
+    CHECK_FALSE( FilterPanel::isModified( background ) );
+    CHECK( FilterFiles::follow( changedBackground, filtersFile, first.tabState().savedJson ) );
+    CHECK( changedBackground.fileChanged );
+    CHECK( changedBackground.root.children.size() == 2 );
+
+    // Changed in the second panel while the first saves again: marked, then saving asks
+    second.appendFilters( { FilterNode::makeFilter( "SECOND" ) } );
+    first.appendFilters( { FilterNode::makeFilter( "FIRST" ) } );
+    REQUIRE( QMetaObject::invokeMethod( &first, "saveFile" ) );
+    CHECK( second.tabState().fileChanged );
+    CHECK( second.snapshot()->filters.size() == 3 );
+
+    QString question;
+    QTimer::singleShot( 200, [ & ] {
+        if ( auto* box = qobject_cast<QMessageBox*>( QApplication::activeModalWidget() ) ) {
+            question = box->text();
+            for ( auto* button : box->buttons() ) {
+                if ( box->buttonRole( button ) == QMessageBox::DestructiveRole ) {
+                    button->click();
+                }
+            }
+        }
+    } );
+    bool saved = true;
+    REQUIRE( QMetaObject::invokeMethod( &second, "saveFile", Q_RETURN_ARG( bool, saved ) ) );
+    CHECK_FALSE( saved );
+    CHECK( question.contains( "was changed" ) );
+
+    // Reloaded: the filters of the file, without the change
+    CHECK_FALSE( second.isModified() );
+    CHECK_FALSE( second.tabState().fileChanged );
+    CHECK( second.snapshot()->filters.size() == 3 );
+    CHECK( second.snapshot()->filters.back().pattern == "FIRST" );
+
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+// Hidden, saves a picture of the tab bar: FLOGG_RENDER_DIR=<dir> klogg_itests "[.render]"
+SCENARIO( "Main window tab bar rendering", "[.render]" )
+{
+    const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
+    if ( renderDir.isEmpty() ) {
+        WARN( "FLOGG_RENDER_DIR is not set" );
+        return;
+    }
+
+    const auto previousPalette = QApplication::palette();
+    const auto previousStyle = QApplication::style()->name();
+    StyleManager::applyStyle( StyleManager::LightStyleKey );
+
+    QTemporaryDir dir;
+    QStringList logs;
+    for ( const auto* name : { "mid.log", "big.log", "mid2.log" } ) {
+        logs.append( dir.filePath( name ) );
+        QFile file( logs.back() );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession windowSession{ appSession, "TabBar", 0 };
+    MainWindow mainWindow( windowSession );
+    mainWindow.resize( 900, 400 );
+    // Painted without being shown, also with the platform style
+    for ( const auto& log : logs ) {
+        mainWindow.loadInitialFile( log, false );
+    }
+    auto* tabArea = mainWindow.findChild<TabbedCrawlerWidget*>();
+    REQUIRE( waitUiState( [ & ] { return tabArea->count() == logs.size(); } ) );
+    tabArea->setCurrentIndex( 0 );
+    QTest::qWait( 200 );
+
+    auto* tabBar = tabArea->tabBar();
+    tabBar->show();
+    REQUIRE( tabBar->grab().save( renderDir + "/tab_bar.png" ) );
+
+    // The first tab with the shared filters
+    SharedFilters::instance().clear();
+    auto* panel = mainWindow.findChild<FilterPanel*>();
+    REQUIRE( panel->setSharedMode( true ) );
+    QTest::qWait( 200 );
+    REQUIRE( tabBar->grab().save( renderDir + "/tab_bar_shared.png" ) );
+    panel->resize( 320, 200 );
+    REQUIRE( panel->grab().save( renderDir + "/panel_shared.png" ) );
+    WARN( mainWindow.windowTitle().toStdString() );
+    REQUIRE( sharedFiltersIcon( tabBar->palette().color( QPalette::Highlight ) )
+                 .pixmap( QSize( 16, 16 ), 4 )
+                 .save( renderDir + "/shared_icon.png" ) );
+    REQUIRE( panel->setSharedMode( false ) );
+    SharedFilters::instance().clear();
+
+    QApplication::setStyle( previousStyle );
+    QApplication::setPalette( previousPalette );
+}
+
+SCENARIO( "Shared filters across windows ask only for the last tab", "[filters]" )
+{
+    QTemporaryDir dir;
+    QStringList logs;
+    for ( const auto* name : { "first.log", "second.log" } ) {
+        logs.append( dir.filePath( name ) );
+        QFile file( logs.back() );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+
+    auto own = FilterNode::makeGroup( "root" );
+    own.children.push_back( FilterNode::makeFilter( "OWN" ) );
+    const auto ownFile = dir.filePath( "own.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", ownFile );
+    SharedFilters::instance().clear();
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession firstSession{ appSession, "Last1", 0 };
+    WindowSession secondSession{ appSession, "Last2", 1 };
+    MainWindow first( firstSession );
+    MainWindow second( secondSession );
+    first.loadInitialFile( logs.at( 0 ), false );
+    second.loadInitialFile( logs.at( 1 ), false );
+    auto* firstPanel = first.findChild<FilterPanel*>();
+    auto* secondPanel = second.findChild<FilterPanel*>();
+
+    // Answers No (discard) and counts the questions
+    auto questions = 0;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        if ( discardQuestion() ) {
+            ++questions;
+        }
+    } );
+    dialogCloser.start( 100 );
+
+    REQUIRE( firstPanel->setSharedMode( true ) );
+    REQUIRE( secondPanel->setSharedMode( true ) );
+    secondPanel->appendFilters( { FilterNode::makeFilter( "SHARED" ) } );
+    CHECK( firstPanel->isModified() );
+
+    // The tab of the other window still uses them
+    REQUIRE( firstPanel->setSharedMode( false ) );
+    CHECK( questions == 0 );
+
+    // The last one asks, the untitled shared filters are dropped when discarded
+    REQUIRE( secondPanel->setSharedMode( false ) );
+    CHECK( questions == 1 );
+    CHECK_FALSE( SharedFilters::instance().isInitialized() );
+
+    // Shared again: the filters of the tab start them again, not an empty set
+    REQUIRE( firstPanel->setSharedMode( true ) );
+    CHECK( questions == 1 );
+    REQUIRE( firstPanel->snapshot()->filters.size() == 1 );
+    CHECK( firstPanel->snapshot()->filters.front().pattern == "OWN" );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "Closing a window keeps the shared filters of the others", "[filters]" )
+{
+    QTemporaryDir dir;
+    QStringList logs;
+    for ( const auto* name : { "first.log", "second.log", "third.log" } ) {
+        logs.append( dir.filePath( name ) );
+        QFile file( logs.back() );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", dir.filePath( "none.flogg-filters.json" ) );
+    SharedFilters::instance().clear();
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession firstSession{ appSession, "Close1", 0 };
+    WindowSession secondSession{ appSession, "Close2", 1 };
+    MainWindow first( firstSession );
+    MainWindow second( secondSession );
+    first.show();
+    second.show();
+
+    auto questions = 0;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        if ( discardQuestion() ) {
+            ++questions;
+        }
+    } );
+    dialogCloser.start( 100 );
+
+    // The second window shares in a tab in the background
+    WindowCommand shared;
+    shared.files = { logs.at( 0 ) };
+    shared.sharedFilters = true;
+    first.runCommand( shared );
+    shared.files = { logs.at( 1 ) };
+    second.runCommand( shared );
+    second.runCommand( WindowCommand{ { logs.at( 2 ) } } );
+    first.findChild<FilterPanel*>()->appendFilters( { FilterNode::makeFilter( "SHARED" ) } );
+
+    CHECK( first.close() );
+    QTest::qWait( 300 );
+    CHECK( questions == 0 );
+
+    CHECK( second.close() );
+    QTest::qWait( 300 );
+    CHECK( questions == 1 );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "A window without a file uses the shared filters too", "[filters]" )
+{
+    QTemporaryDir dir;
+    const auto log = dir.filePath( "only.log" );
+    {
+        QFile file( log );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", dir.filePath( "none.flogg-filters.json" ) );
+    SharedFilters::instance().clear();
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession firstSession{ appSession, "Empty1", 0 };
+    WindowSession secondSession{ appSession, "Empty2", 1 };
+    MainWindow first( firstSession );
+    MainWindow empty( secondSession );
+    first.loadInitialFile( log, false );
+    auto* firstPanel = first.findChild<FilterPanel*>();
+    auto* emptyPanel = empty.findChild<FilterPanel*>();
+
+    auto questions = 0;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        if ( discardQuestion() ) {
+            ++questions;
+        }
+    } );
+    dialogCloser.start( 100 );
+
+    REQUIRE( firstPanel->setSharedMode( true ) );
+    REQUIRE( emptyPanel->setSharedMode( true ) );
+    firstPanel->appendFilters( { FilterNode::makeFilter( "SHARED" ) } );
+    CHECK( emptyPanel->snapshot() == firstPanel->snapshot() );
+
+    // The window without a file still uses them
+    REQUIRE( firstPanel->setSharedMode( false ) );
+    CHECK( questions == 0 );
+    CHECK( SharedFilters::instance().isInitialized() );
+
+    // Its first file takes them over
+    empty.loadInitialFile( log, false );
+    CHECK( SharedFilters::instance().isInitialized() );
+    CHECK( emptyPanel->isSharedMode() );
+    CHECK( emptyPanel->snapshot()->filters.size() == 1 );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "Unchanged shared filters leave without a question", "[filters]" )
+{
+    QTemporaryDir dir;
+    auto own = FilterNode::makeGroup( "root" );
+    own.children.push_back( FilterNode::makeFilter( "OWN" ) );
+    const auto ownFile = dir.filePath( "own.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", ownFile );
+    SharedFilters::instance().clear();
+
+    QWidget tab;
+    FilterPanel panel;
+    panel.setTab( &tab );
+
+    auto questions = 0;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        if ( discardQuestion() ) {
+            ++questions;
+        }
+    } );
+    dialogCloser.start( 100 );
+
+    REQUIRE( panel.setSharedMode( true ) );
+    CHECK( panel.currentFile() == ownFile );
+    REQUIRE( panel.setSharedMode( false ) );
+    CHECK( questions == 0 );
+    CHECK( panel.currentFile() == ownFile );
+    // A copy left by its last user is dropped
+    CHECK_FALSE( SharedFilters::instance().isInitialized() );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "Shared filters with their own file are dropped by their last user", "[filters]" )
+{
+    QTemporaryDir dir;
+    auto own = FilterNode::makeGroup( "root" );
+    own.children.push_back( FilterNode::makeFilter( "OWN" ) );
+    const auto ownFile = dir.filePath( "own.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+    auto other = FilterNode::makeGroup( "root" );
+    other.children.push_back( FilterNode::makeFilter( "OTHER" ) );
+    const auto otherFile = dir.filePath( "other.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( other, otherFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", ownFile );
+    SharedFilters::instance().clear();
+
+    QWidget tab;
+    FilterPanel panel;
+    panel.setTab( &tab );
+
+    // The shared filters get another file, then their last user leaves
+    REQUIRE( panel.setSharedMode( true ) );
+    REQUIRE( panel.openFiltersFile( otherFile, false ) );
+    CHECK( SharedFilters::instance().state().file == otherFile );
+    REQUIRE( panel.setSharedMode( false ) );
+    CHECK( panel.currentFile() == ownFile );
+    CHECK_FALSE( SharedFilters::instance().isInitialized() );
+
+    // Shared again: they start from the filters of the tab, as the first time
+    REQUIRE( panel.setSharedMode( true ) );
+    CHECK( panel.currentFile() == ownFile );
+    REQUIRE( panel.snapshot()->filters.size() == 1 );
+    CHECK( panel.snapshot()->filters.front().pattern == "OWN" );
+
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "Unsaved filters are taken into the shared mode and asked about on close",
+          "[filters]" )
+{
+    QTemporaryDir dir;
+    const auto log = dir.filePath( "own.log" );
+    {
+        QFile file( log );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+    auto own = FilterNode::makeGroup( "root" );
+    own.children.push_back( FilterNode::makeFilter( "OWN" ) );
+    const auto ownFile = dir.filePath( "own.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", ownFile );
+    SharedFilters::instance().clear();
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession session{ appSession, "Unsaved1", 0 };
+    MainWindow window( session );
+    window.show();
+    window.loadInitialFile( log, false );
+    auto* panel = window.findChild<FilterPanel*>();
+    auto* label = panel->findChild<QLabel*>();
+
+    // Discards the shared filters left, on close saves the own filters only and records what
+    // is listed
+    QStringList listed;
+    auto questions = 0;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        auto* modal = QApplication::activeModalWidget();
+        if ( !modal ) {
+            return;
+        }
+        ++questions;
+        if ( modal->objectName() != "unsavedFilters" ) {
+            discardQuestion();
+            return;
+        }
+        auto* list = modal->findChild<QTreeWidget*>();
+        for ( int i = 0; i < list->topLevelItemCount(); ++i ) {
+            auto* item = list->topLevelItem( i );
+            listed.append( item->text( 0 ) + " | " + item->text( 1 ) );
+            if ( item->text( 0 ).startsWith( "Shared" ) ) {
+                item->setCheckState( 0, Qt::Unchecked );
+            }
+        }
+        modal->findChild<QDialogButtonBox*>()->button( QDialogButtonBox::Save )->click();
+    } );
+    dialogCloser.start( 100 );
+
+    // Entering the shared mode with unsaved changes does not ask, the shared filters start
+    // with them (untitled) and the own ones keep them aside
+    panel->appendFilters( { FilterNode::makeFilter( "EDIT" ) } );
+    REQUIRE( panel->setSharedMode( true ) );
+    CHECK( questions == 0 );
+    CHECK( panel->currentFile().isEmpty() );
+    REQUIRE( panel->snapshot()->filters.size() == 2 );
+    CHECK( panel->isPrivateModified() );
+    CHECK( label->toolTip().contains( "own.flogg-filters.json" ) );
+    label->resize( 2000, label->height() );
+    CHECK( label->text().endsWith( "own: own.flogg-filters.json *" ) );
+
+    // A narrow panel shows the end as "...", the label does not make it wider
+    label->resize( 60, label->height() );
+    CHECK( label->text().endsWith( QChar( 0x2026 ) ) );
+    CHECK( label->minimumSizeHint().width() == 0 );
+    CHECK( filters::loadFromFile( ownFile )->children.size() == 1 );
+
+    // Leaving asks about the shared filters only, it brings the own ones back, still unsaved,
+    // and entering again does not ask either
+    panel->appendFilters( { FilterNode::makeFilter( "TEMP" ) } );
+    REQUIRE( panel->setSharedMode( false ) );
+    CHECK( questions == 1 );
+    questions = 0;
+    CHECK( panel->currentFile() == ownFile );
+    CHECK( panel->isModified() );
+    REQUIRE( panel->snapshot()->filters.size() == 2 );
+    CHECK( panel->snapshot()->filters.back().pattern == "EDIT" );
+    CHECK_FALSE( label->text().contains( "own:" ) );
+
+    REQUIRE( panel->setSharedMode( true ) );
+    CHECK( questions == 0 );
+    panel->appendFilters( { FilterNode::makeFilter( "TEMP" ) } );
+
+    // Closing lists both in one question, the own filters are saved without being shown
+    CHECK( window.close() );
+    QTest::qWait( 300 );
+    CHECK( questions == 1 );
+    REQUIRE( listed.size() == 2 );
+    CHECK( listed.at( 0 ) == "Shared filters | untitled" );
+    CHECK( listed.at( 1 )
+           == "Filters of own.log (hidden while shared) | own.flogg-filters.json" );
+    const auto saved = filters::loadFromFile( ownFile );
+    REQUIRE( saved );
+    REQUIRE( saved->children.size() == 2 );
+    CHECK( saved->children.back().pattern == "EDIT" );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
+SCENARIO( "A file opened again gets the filters saved since", "[filters]" )
+{
+    QTemporaryDir dir;
+    const auto log = dir.filePath( "again.log" );
+    {
+        QFile file( log );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+    auto own = FilterNode::makeGroup( "root" );
+    own.children.push_back( FilterNode::makeFilter( "OWN" ) );
+    const auto ownFile = dir.filePath( "again.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", ownFile );
+    SharedFilters::instance().clear();
+
+    auto questions = 0;
+    QTimer dialogCloser;
+    QObject::connect( &dialogCloser, &QTimer::timeout, [ & ] {
+        if ( discardQuestion() ) {
+            ++questions;
+        }
+    } );
+    dialogCloser.start( 100 );
+
+    // The session keeps the file with filters older than the file saved afterwards
+    auto appSession = std::make_shared<Session>();
+    {
+        WindowSession session{ appSession, "Again1", 0 };
+        MainWindow window( session );
+        window.show();
+        window.loadInitialFile( log, false );
+        auto* crawler = qobject_cast<CrawlerWidget*>(
+            window.findChild<TabbedCrawlerWidget*>()->currentWidget() );
+        auto* panel = window.findChild<FilterPanel*>();
+
+        // The session keeps the filters only while they have unsaved changes
+        const auto keepsRoot = [ & ] {
+            crawler->setFilterTabState( panel->tabState() );
+            return crawler->context()->toString().contains( "OLD" );
+        };
+        panel->appendFilters( { FilterNode::makeFilter( "OLD" ) } );
+        CHECK( keepsRoot() );
+
+        // Discarded when the window is closed, they are not kept either (the window opened
+        // below does not get them)
+        CHECK( window.close() );
+        QTest::qWait( 300 );
+    }
+    CHECK( questions == 1 );
+    own.children.push_back( FilterNode::makeFilter( "SAVED" ) );
+    REQUIRE( filters::saveToFile( own, ownFile ) );
+
+    WindowSession session{ appSession, "Again2", 1 };
+    MainWindow window( session );
+    window.show();
+    window.loadInitialFile( log, false );
+    auto* panel = window.findChild<FilterPanel*>();
+    CHECK( panel->currentFile() == ownFile );
+    CHECK_FALSE( panel->isModified() );
+    REQUIRE( panel->snapshot()->filters.size() == 2 );
+    CHECK( panel->snapshot()->filters.back().pattern == "SAVED" );
+
+    dialogCloser.stop();
+    SharedFilters::instance().clear();
+    settings.setValue( "filterPanel/currentFile", previousFile );
 }

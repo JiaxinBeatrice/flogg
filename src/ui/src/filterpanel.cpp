@@ -25,6 +25,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QCursor>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDrag>
 #include <QDropEvent>
@@ -40,6 +42,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
@@ -94,6 +97,14 @@ QString& startupFile()
 {
     static QString path;
     return path;
+}
+
+// Revisions are unique among all the panels: a tab can get the snapshots of several panels
+// (shared filters, moved tab)
+uint64_t nextRevision()
+{
+    static uint64_t revision = 0;
+    return ++revision;
 }
 
 // Compares the filters only, every tree built from the panel gets a new root
@@ -185,6 +196,42 @@ bool isSameOrChild( const QTreeWidgetItem* item, const QTreeWidgetItem* ancestor
 }
 
 // Lays out widgets left to right, wrapping to a new row when the width runs out
+// Shows "..." at the end of a text too long instead of widening the panel
+class ElidedLabel : public QLabel {
+  public:
+    void setFullText( const QString& text )
+    {
+        fullText_ = text;
+        updateText();
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return { 0, QLabel::minimumSizeHint().height() };
+    }
+
+    QSize sizeHint() const override
+    {
+        return { 0, QLabel::sizeHint().height() };
+    }
+
+  protected:
+    void resizeEvent( QResizeEvent* event ) override
+    {
+        QLabel::resizeEvent( event );
+        updateText();
+    }
+
+  private:
+    void updateText()
+    {
+        const auto width = contentsRect().width();
+        setText( fontMetrics().elidedText( fullText_, Qt::ElideRight, std::max( width, 0 ) ) );
+    }
+
+    QString fullText_;
+};
+
 class FlowLayout : public QLayout {
   public:
     FlowLayout()
@@ -609,6 +656,220 @@ class FilterTreeWidget : public QTreeWidget {
 
 } // namespace
 
+QIcon sharedFiltersIcon( const QColor& color )
+{
+    QIcon icon;
+    for ( const auto scale : { 1, 2, 3 } ) {
+        QPixmap pixmap( 16 * scale, 16 * scale );
+        pixmap.setDevicePixelRatio( scale );
+        pixmap.fill( Qt::transparent );
+
+        QPainter painter( &pixmap );
+        painter.setRenderHint( QPainter::Antialiasing );
+        QPen pen( color, 1.7 );
+        painter.setPen( pen );
+        painter.setBrush( Qt::NoBrush );
+
+        // Two links crossing the icon diagonally, overlapping in the middle
+        painter.translate( 8, 8 );
+        painter.rotate( -45 );
+        painter.drawRoundedRect( QRectF( -7.4, -2.7, 9.0, 5.4 ), 2.7, 2.7 );
+        painter.drawRoundedRect( QRectF( -1.6, -2.7, 9.0, 5.4 ), 2.7, 2.7 );
+        painter.end();
+
+        icon.addPixmap( pixmap );
+    }
+    return icon;
+}
+
+FilterFiles& FilterFiles::instance()
+{
+    static auto* const filterFiles = new FilterFiles;
+    return *filterFiles;
+}
+
+bool FilterFiles::isSameFile( const QString& lhs, const QString& rhs )
+{
+    return !lhs.isEmpty() && !rhs.isEmpty() && QFileInfo( lhs ) == QFileInfo( rhs );
+}
+
+bool FilterFiles::follow( FilterTabState& state, const QString& path, const QByteArray& json )
+{
+    if ( !state.initialized || !isSameFile( state.file, path ) || state.savedJson == json ) {
+        return false;
+    }
+
+    if ( FilterPanel::isModified( state ) ) {
+        state.fileChanged = true;
+        return true;
+    }
+
+    // Applied again when the tab is shown
+    state.root = filters::fromJson( QJsonDocument::fromJson( json ).object() );
+    state.savedJson = json;
+    state.json = json;
+    state.snapshot.reset();
+    state.fileChanged = false;
+    return true;
+}
+
+SharedFilters& SharedFilters::instance()
+{
+    static auto* const sharedFilters = [] {
+        auto* filters = new SharedFilters;
+        // Saved by a tab using the file on its own
+        connect( &FilterFiles::instance(), &FilterFiles::saved, filters,
+                 [ filters ]( const QString& path, const QByteArray& json ) {
+                     if ( FilterFiles::follow( filters->state_, path, json ) ) {
+                         Q_EMIT filters->changed( nullptr );
+                     }
+                 } );
+        return filters;
+    }();
+    return *sharedFilters;
+}
+
+void SharedFilters::setState( FilterTabState state, const QObject* source )
+{
+    state_ = std::move( state );
+    state_.initialized = true;
+    state_.shared = false;
+    Q_EMIT changed( source );
+}
+
+void SharedFilters::setUser( QWidget* tab, bool isUser )
+{
+    // Called on every tab switch, the views follow actual changes only
+    const auto wasUser = this->isUser( tab );
+    users_.removeIf( [ tab ]( const auto& user ) { return user.isNull() || user == tab; } );
+    if ( isUser && tab ) {
+        users_.append( tab );
+        if ( !wasUser ) {
+            // Also when the tab is destroyed without leaving first
+            connect( tab, &QObject::destroyed, this, &SharedFilters::usersChanged,
+                     Qt::UniqueConnection );
+        }
+    }
+    if ( wasUser != ( isUser && tab ) ) {
+        Q_EMIT usersChanged();
+    }
+
+    // Shared filters left by their last user are dropped (it was asked to save them): the
+    // next tab shared starts them again from its own
+    if ( users_.isEmpty() && state_.initialized ) {
+        state_ = {};
+    }
+}
+
+bool SharedFilters::isUser( const QWidget* tab ) const
+{
+    return std::any_of( users_.begin(), users_.end(),
+                        [ tab ]( const auto& user ) { return user == tab; } );
+}
+
+bool SharedFilters::hasOtherUsers( const QWidget* tab, const QWidget* closingWindow ) const
+{
+    return hasUsersLeft( [ & ]( const QWidget* user ) {
+        return user == tab || ( closingWindow && user->window() == closingWindow );
+    } );
+}
+
+bool SharedFilters::hasUsersLeft( const std::function<bool( const QWidget* )>& isClosing ) const
+{
+    return std::any_of( users_.begin(), users_.end(), [ & ]( const auto& user ) {
+        return !user.isNull() && !isClosing( user.data() );
+    } );
+}
+
+bool SharedFilters::save( QWidget* parent )
+{
+    auto state = state_;
+    if ( !FilterPanel::saveState( state, parent, tr( "Save shared filters as" ) ) ) {
+        return false;
+    }
+    setState( std::move( state ), nullptr );
+    FilterFiles::instance().notifySaved( state_.file, state_.savedJson, this );
+    return true;
+}
+
+void SharedFilters::discardChanges()
+{
+    auto state = state_;
+    FilterPanel::discardChanges( state );
+    setState( std::move( state ), nullptr );
+}
+
+bool confirmUnsavedFilters( QWidget* parent, const QString& text,
+                            const std::vector<UnsavedFilters>& filters )
+{
+    if ( filters.empty() ) {
+        return true;
+    }
+
+    QDialog dialog( parent );
+    dialog.setObjectName( "unsavedFilters" );
+    dialog.setWindowTitle( QObject::tr( "Unsaved filters" ) );
+
+    auto* list = new QTreeWidget( &dialog );
+    list->setRootIsDecorated( false );
+    list->setHeaderLabels( { QObject::tr( "Filters" ), QObject::tr( "File" ) } );
+    for ( const auto& filter : filters ) {
+        auto* item = new QTreeWidgetItem( list );
+        item->setText( 0, filter.name );
+        item->setText( 1, filter.file.isEmpty() ? QObject::tr( "untitled" )
+                                                : QFileInfo( filter.file ).fileName() );
+        item->setToolTip( 1, QDir::toNativeSeparators( filter.file ) );
+        item->setCheckState( 0, Qt::Checked );
+    }
+    list->resizeColumnToContents( 0 );
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Discard | QDialogButtonBox::Cancel, &dialog );
+    buttons->button( QDialogButtonBox::Save )->setText( QObject::tr( "Save selected" ) );
+    buttons->button( QDialogButtonBox::Discard )->setText( QObject::tr( "Discard all" ) );
+    buttons->button( QDialogButtonBox::Save )->setDefault( true );
+
+    auto discard = false;
+    QObject::connect( buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept );
+    QObject::connect( buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject );
+    QObject::connect( buttons->button( QDialogButtonBox::Discard ), &QPushButton::clicked,
+                      &dialog, [ & ] {
+                          discard = true;
+                          dialog.accept();
+                      } );
+
+    auto* layout = new QVBoxLayout( &dialog );
+    layout->addWidget( new QLabel( text, &dialog ) );
+    layout->addWidget( list );
+    layout->addWidget( buttons );
+
+    if ( dialog.exec() != QDialog::Accepted ) {
+        return false;
+    }
+
+    const auto isSelected = [ & ]( size_t i ) {
+        return !discard
+               && list->topLevelItem( static_cast<int>( i ) )->checkState( 0 ) == Qt::Checked;
+    };
+    // In the order shown, the first one not saved stops the closing
+    for ( size_t i = 0; i < filters.size(); ++i ) {
+        if ( isSelected( i ) && !filters[ i ].save() ) {
+            return false;
+        }
+    }
+    for ( size_t i = 0; i < filters.size(); ++i ) {
+        if ( !isSelected( i ) ) {
+            filters[ i ].discard();
+        }
+    }
+    return true;
+}
+
+void SharedFilters::notifyHighlightersCompiled( const HighlighterSet* highlighters )
+{
+    Q_EMIT highlightersCompiled( highlighters );
+}
+
 FilterPanel::FilterPanel( QWidget* parent )
     : QWidget( parent )
     , snapshot_( std::make_shared<FilterSnapshot>() )
@@ -621,6 +882,61 @@ FilterPanel::FilterPanel( QWidget* parent )
     changeTimer_.setSingleShot( true );
     changeTimer_.setInterval( 150 );
     connect( &changeTimer_, &QTimer::timeout, this, &FilterPanel::publishChange );
+
+    // Changes of the shared filters made in another panel
+    auto& sharedFilters = SharedFilters::instance();
+    connect( &sharedFilters, &SharedFilters::changed, this, [ this ]( const QObject* source ) {
+        if ( !shared_ || source == this ) {
+            return;
+        }
+        FilterTabState view;
+        saveTreeView( view );
+        showSharedFilters( view );
+        if ( !snapshot_ ) {
+            publishChange();
+        }
+        else {
+            Q_EMIT filtersChanged();
+        }
+    } );
+
+    // The file of the shown filters saved by another tab
+    connect( &FilterFiles::instance(), &FilterFiles::saved, this,
+             [ this ]( const QString& path, const QByteArray& json, const QObject* source ) {
+                 if ( source == this ) {
+                     return;
+                 }
+                 if ( shared_ ) {
+                     // The shared filters follow in SharedFilters, the own ones of the tab here
+                     if ( FilterFiles::follow( privateState_, path, json ) ) {
+                         updateFileLabel();
+                     }
+                     return;
+                 }
+                 if ( !FilterFiles::isSameFile( currentFile_, path ) || json == savedJson_ ) {
+                     return;
+                 }
+
+                 flushChange();
+                 if ( isModified() ) {
+                     fileChanged_ = true;
+                     updateFileLabel();
+                     return;
+                 }
+
+                 FilterTabState view;
+                 saveTreeView( view );
+                 savedJson_ = json;
+                 setRoot( filters::fromJson( QJsonDocument::fromJson( json ).object() ) );
+                 restoreTreeView( view );
+                 publishChange();
+             } );
+    connect( &sharedFilters, &SharedFilters::highlightersCompiled, this,
+             [ this ]( const HighlighterSet* highlighters ) {
+                 if ( shared_ && snapshot_ && snapshot_->highlighters.get() == highlighters ) {
+                     Q_EMIT highlightersCompiled();
+                 }
+             } );
 
     loadFile( defaultFile(), startupFile().isEmpty() );
 }
@@ -655,6 +971,8 @@ void FilterPanel::setupUi()
     tree_->setDefaultDropAction( Qt::MoveAction );
     tree_->setContextMenuPolicy( Qt::CustomContextMenu );
     tree_->setUniformRowHeights( true );
+    // Double click edits the item; the view would toggle a group after the dialog closes
+    tree_->setExpandsOnDoubleClick( false );
 
     // Each column is resized by its own right edge only, a wider panel just shows more room
     auto* header = tree_->header();
@@ -759,6 +1077,23 @@ void FilterPanel::setupUi()
     addArrowButton( moveDownAction_ );
     tree_->addAction( moveDownAction_ );
 
+    sharedAction_ = new QAction( tr( "Shared" ), this );
+    sharedAction_->setCheckable( true );
+    sharedAction_->setToolTip(
+        tr( "Use the filters shared by every tab in shared mode, in all the windows: a change "
+            "made in one of them, saved or not, shows in all of them" ) );
+    connect( sharedAction_, &QAction::triggered, this, [ this ]( bool checked ) {
+        setSharedMode( checked );
+        updateSharedAction();
+    } );
+    sharedAction_->setIcon(
+        sharedFiltersIcon( palette().color( QPalette::Active, QPalette::Highlight ) ) );
+    auto* sharedButton = addButton( sharedAction_ );
+    sharedButton->setToolButtonStyle( Qt::ToolButtonTextBesideIcon );
+    // As tall as the other text buttons
+    sharedButton->setIconSize( QSize( 14, 14 ) );
+    sharedButton->setFixedHeight( textButtonHeight );
+
     findNextAction_ = new QAction( tr( "Find next match of filter" ), this );
     findNextAction_->setShortcutContext( Qt::WindowShortcut );
     connect( findNextAction_, &QAction::triggered, this, [ this ] { requestFind( false ); } );
@@ -784,7 +1119,7 @@ void FilterPanel::setupUi()
     connect( editAction_, &QAction::triggered, this, &FilterPanel::editCurrent );
     tree_->addAction( editAction_ );
 
-    fileLabel_ = new QLabel;
+    fileLabel_ = new ElidedLabel;
     fileLabel_->setTextInteractionFlags( Qt::TextSelectableByMouse );
     fileLabel_->setContentsMargins( 4, 0, 4, 0 );
 
@@ -1128,9 +1463,11 @@ bool FilterPanel::saveFileAs()
     }
 
     currentFile_ = path;
+    sharedCopy_ = false;
     settings().setValue( CurrentFileKey, toRememberedPath( currentFile_ ) );
     addRecentFile( currentFile_ );
-    return saveCurrentFile();
+    // The file dialog already asked about replacing an existing file
+    return saveCurrentFile( false );
 }
 
 void FilterPanel::importTatFile()
@@ -1225,6 +1562,10 @@ void FilterPanel::showContextMenu( const QPoint& pos )
     menu.addAction( suspendAction_ );
     menu.addAction( anySuspended() ? tr( "Resume all" ) : tr( "Suspend all" ), this,
                     &FilterPanel::toggleSuspendAll );
+    menu.addSeparator();
+
+    menu.addAction( tr( "Expand all" ), tree_, &QTreeView::expandAll );
+    menu.addAction( tr( "Collapse all" ), tree_, &QTreeView::collapseAll );
     menu.addSeparator();
 
     menu.addAction( tr( "Add to search" ), this,
@@ -1331,11 +1672,14 @@ void FilterPanel::publishChange()
         // Unchanged filters share the saved copy instead of holding their own
         treeJson_ = savedJson_;
     }
+    else if ( shared_ && sharedCopy_ ) {
+        detachSharedCopy();
+    }
 
     updateLook();
 
     auto snapshot = std::make_shared<FilterSnapshot>();
-    snapshot->revision = ++revision_;
+    snapshot->revision = nextRevision();
     for ( const auto* filter : filters::effectiveFilters( root ) ) {
         snapshot->filters.push_back( *filter );
     }
@@ -1359,11 +1703,18 @@ void FilterPanel::publishChange()
     // previous ones meanwhile instead of compiling them on the UI thread when they paint
     if ( !highlighters->isEmpty() ) {
         auto* watcher = new QFutureWatcher<void>( this );
-        connect( watcher, &QFutureWatcher<void>::finished, this, [ this, watcher ] {
-            watcher->deleteLater();
-            Q_EMIT highlightersCompiled();
-        } );
+        connect( watcher, &QFutureWatcher<void>::finished, this,
+                 [ this, watcher, compiled = highlighters.get() ] {
+                     watcher->deleteLater();
+                     Q_EMIT highlightersCompiled();
+                     // The other panels showing the shared filters use the same highlighters
+                     SharedFilters::instance().notifyHighlightersCompiled( compiled );
+                 } );
         watcher->setFuture( QtConcurrent::run( [ highlighters ] { highlighters->compile(); } ) );
+    }
+
+    if ( shared_ ) {
+        pushShared( root );
     }
 
     Q_EMIT filtersChanged();
@@ -1374,12 +1725,23 @@ FilterTabState FilterPanel::tabState()
     flushChange();
 
     FilterTabState state;
+    if ( shared_ ) {
+        // The shared filters stay in SharedFilters
+        state = privateState_;
+        state.shared = true;
+        state.collapsedGroups.clear();
+        state.selectedItems.clear();
+        state.currentItem.clear();
+    }
+    else {
+        state.file = currentFile_;
+        state.root = buildTree();
+        state.savedJson = savedJson_;
+        state.json = treeJson_;
+        state.snapshot = snapshot_;
+        state.fileChanged = fileChanged_;
+    }
     state.initialized = true;
-    state.file = currentFile_;
-    state.root = buildTree();
-    state.savedJson = savedJson_;
-    state.json = treeJson_;
-    state.snapshot = snapshot_;
     state.hits = hits_;
     saveTreeView( state );
     return state;
@@ -1434,8 +1796,37 @@ void FilterPanel::setTabState( const FilterTabState& state )
     // Shown while the tree is built, until the tab gets its own counts
     hits_ = state.hits;
 
+    if ( state.shared && state.initialized ) {
+        auto own = state;
+        own.shared = false;
+        if ( !SharedFilters::instance().isInitialized() ) {
+            // Nothing to share yet: the filters of the tab start the shared ones
+            setTabState( own );
+            shared_ = true;
+            setPrivateState( std::move( own ) );
+            updateSharedAction();
+            seedShared();
+            return;
+        }
+
+        shared_ = true;
+        setPrivateState( std::move( own ) );
+        updateSharedAction();
+        showSharedFilters( state );
+        if ( !snapshot_ ) {
+            publishChange();
+        }
+        return;
+    }
+
+    shared_ = false;
+    sharedCopy_ = false;
+    updateSharedAction();
+    privateState_ = {};
+
     if ( !state.initialized ) {
-        if ( !loadFile( defaultFile(), false ) ) {
+        const auto file = state.file.isEmpty() ? defaultFile() : state.file;
+        if ( !loadFile( file, false ) ) {
             // The filters of the previous tab must not stay
             currentFile_ = defaultFile();
             savedJson_ = serialize( FilterNode::makeGroup( "root" ) );
@@ -1448,10 +1839,11 @@ void FilterPanel::setTabState( const FilterTabState& state )
     currentFile_ = state.file;
     savedJson_ = state.savedJson;
     treeJson_ = state.json.isEmpty() ? serialize( state.root ) : state.json;
+    fileChanged_ = state.fileChanged;
     setRoot( state.root );
     restoreTreeView( state );
 
-    if ( state.snapshot ) {
+    if ( state.snapshot && !shared_ ) {
         // The tab already has these filters applied, setRoot gave the items their look
         snapshot_ = state.snapshot;
         updateFileLabel();
@@ -1461,16 +1853,18 @@ void FilterPanel::setTabState( const FilterTabState& state )
     }
 }
 
-FilterTabState FilterPanel::restoredTabState( const QString& file, const FilterNode& root )
+FilterTabState FilterPanel::restoredTabState( const QString& file,
+                                              const std::optional<FilterNode>& root )
 {
     FilterTabState state;
     state.initialized = true;
     state.file = file;
-    state.root = root;
 
-    const auto saved = QFileInfo::exists( file ) ? filters::loadFromFile( file )
-                                                 : FilterNode::makeGroup( "root" );
-    state.savedJson = serialize( saved.value_or( FilterNode::makeGroup( "root" ) ) );
+    const auto saved = ( QFileInfo::exists( file ) ? filters::loadFromFile( file )
+                                                   : FilterNode::makeGroup( "root" ) )
+                           .value_or( FilterNode::makeGroup( "root" ) );
+    state.root = root.value_or( saved );
+    state.savedJson = serialize( saved );
     return state;
 }
 
@@ -1509,8 +1903,7 @@ bool FilterPanel::confirmClose( const QString& tabName )
         return saveFile();
     }
     if ( answer == QMessageBox::Discard ) {
-        setRoot( filters::fromJson( QJsonDocument::fromJson( savedJson_ ).object() ) );
-        publishChange();
+        discardChanges();
         return true;
     }
     return false;
@@ -1821,6 +2214,9 @@ bool FilterPanel::loadFile( const QString& path, bool remember )
     }
 
     savedJson_ = serialize( *root );
+    fileChanged_ = false;
+    // Opened on purpose, also as shared filters
+    sharedCopy_ = false;
     setRoot( *root );
 
     // Publish right away, file loading should not wait for the debounce timer
@@ -1829,10 +2225,35 @@ bool FilterPanel::loadFile( const QString& path, bool remember )
     return true;
 }
 
-bool FilterPanel::saveCurrentFile()
+bool FilterPanel::saveCurrentFile( bool checkFile )
 {
     if ( currentFile_.isEmpty() ) {
         return false;
+    }
+
+    // Changed since it was loaded or saved here: by another tab with unsaved changes, or by
+    // another program
+    if ( checkFile && QFileInfo::exists( currentFile_ ) ) {
+        const auto onDisk = filters::loadFromFile( currentFile_ );
+        if ( !onDisk || serialize( *onDisk ) != savedJson_ ) {
+            QMessageBox question( QMessageBox::Warning, tr( "Save filters" ),
+                                  tr( "%1 was changed since these filters were loaded, by another "
+                                      "tab or program. Overwrite it with the filters shown here, "
+                                      "or reload it and drop the changes made here?" )
+                                      .arg( QDir::toNativeSeparators( currentFile_ ) ),
+                                  QMessageBox::Cancel, this );
+            auto* overwrite = question.addButton( tr( "Overwrite" ), QMessageBox::AcceptRole );
+            auto* reload = question.addButton( tr( "Reload" ), QMessageBox::DestructiveRole );
+            question.setDefaultButton( QMessageBox::Cancel );
+            question.exec();
+            if ( question.clickedButton() == reload ) {
+                loadFile( currentFile_, false );
+                return false;
+            }
+            if ( question.clickedButton() != overwrite ) {
+                return false;
+            }
+        }
     }
 
     const auto root = buildTree();
@@ -1847,7 +2268,12 @@ bool FilterPanel::saveCurrentFile()
 
     savedJson_ = serialize( root );
     treeJson_ = savedJson_;
+    fileChanged_ = false;
+    if ( shared_ ) {
+        pushShared( root );
+    }
     updateFileLabel();
+    FilterFiles::instance().notifySaved( currentFile_, savedJson_, this );
     return true;
 }
 
@@ -1912,8 +2338,246 @@ void FilterPanel::addRecentFile( const QString& path )
 
 void FilterPanel::updateFileLabel()
 {
-    const auto fileName
+    auto fileName
         = currentFile_.isEmpty() ? tr( "untitled" ) : QFileInfo( currentFile_ ).fileName();
-    fileLabel_->setText( isModified() ? fileName + " *" : fileName );
-    fileLabel_->setToolTip( QDir::toNativeSeparators( currentFile_ ) );
+    if ( isModified() ) {
+        fileName += " *";
+    }
+    if ( fileChanged_ ) {
+        fileName += tr( " (saved by another tab)" );
+    }
+    auto toolTip = QDir::toNativeSeparators( currentFile_ );
+    if ( shared_ ) {
+        fileName = tr( "Shared: %1" ).arg( fileName );
+        if ( isModified( privateState_ ) ) {
+            const auto ownName = privateState_.file.isEmpty()
+                                     ? tr( "untitled" )
+                                     : QFileInfo( privateState_.file ).fileName();
+            fileName += tr( "  \u00b7  own: %1 *" ).arg( ownName );
+            toolTip += tr( "\nThe own filters of this tab (%1) have unsaved changes, they come "
+                           "back when it leaves the shared mode" )
+                           .arg( ownName );
+        }
+    }
+    static_cast<ElidedLabel*>( fileLabel_ )->setFullText( fileName );
+    fileLabel_->setToolTip( toolTip );
+}
+
+void FilterPanel::setPrivateState( FilterTabState state )
+{
+    // Serialized once, the file label compares it on every change
+    if ( state.json.isEmpty() ) {
+        state.json = serialize( state.root );
+    }
+    privateState_ = std::move( state );
+    updateFileLabel();
+}
+
+bool FilterPanel::saveState( FilterTabState& state, QWidget* parent, const QString& title )
+{
+    auto path = state.file;
+    if ( path.isEmpty() ) {
+        path = QFileDialog::getSaveFileName( parent, title, {}, tr( FileFilter ) );
+        if ( path.isEmpty() ) {
+            return false;
+        }
+        if ( !path.endsWith( ".json" ) ) {
+            path.append( ".flogg-filters.json" );
+        }
+        addRecentFile( path );
+    }
+    // Changed since it was loaded or saved, by another tab or program
+    else if ( QFileInfo::exists( path ) ) {
+        const auto onDisk = filters::loadFromFile( path );
+        if ( ( !onDisk || serialize( *onDisk ) != state.savedJson )
+             && QMessageBox::warning(
+                    parent, tr( "Save filters" ),
+                    tr( "%1 was changed since these filters were loaded, by another tab or "
+                        "program. Overwrite it?" )
+                        .arg( QDir::toNativeSeparators( path ) ),
+                    QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Cancel )
+                    != QMessageBox::Save ) {
+            return false;
+        }
+    }
+
+    QString error;
+    if ( !filters::saveToFile( state.root, path, &error ) ) {
+        LOG_ERROR << "Failed to save filters to " << path.toStdString() << ": "
+                  << error.toStdString();
+        QMessageBox::warning( parent, tr( "Save filters" ),
+                              tr( "Can't save filters to %1: %2" ).arg( path, error ) );
+        return false;
+    }
+
+    state.file = path;
+    state.savedJson = serialize( state.root );
+    state.json = state.savedJson;
+    state.fileChanged = false;
+    state.copyOfFile = false;
+    return true;
+}
+
+void FilterPanel::discardChanges( FilterTabState& state )
+{
+    state.root = filters::fromJson( QJsonDocument::fromJson( state.savedJson ).object() );
+    state.json = state.savedJson;
+    state.snapshot.reset();
+}
+
+void FilterPanel::discardChanges()
+{
+    setRoot( filters::fromJson( QJsonDocument::fromJson( savedJson_ ).object() ) );
+    publishChange();
+}
+
+void FilterPanel::discardPrivateChanges()
+{
+    auto state = privateState_;
+    discardChanges( state );
+    setPrivateState( std::move( state ) );
+}
+
+bool FilterPanel::savePrivateFilters( const QString& tabName )
+{
+    auto state = privateState_;
+    if ( !saveState( state, this, tr( "Save filters of %1 as" ).arg( tabName ) ) ) {
+        return false;
+    }
+    setPrivateState( std::move( state ) );
+    FilterFiles::instance().notifySaved( privateState_.file, privateState_.savedJson, this );
+    return true;
+}
+
+void FilterPanel::setTab( QWidget* tab )
+{
+    // Without a tab the panel itself uses the shared filters, the first tab takes over
+    if ( tab && !tab_ ) {
+        auto& sharedFilters = SharedFilters::instance();
+        if ( shared_ ) {
+            sharedFilters.setUser( tab, true );
+        }
+        sharedFilters.setUser( this, false );
+    }
+    tab_ = tab;
+}
+
+QWidget* FilterPanel::sharedUser()
+{
+    return tab_ ? tab_.data() : this;
+}
+
+bool FilterPanel::setSharedMode( bool shared )
+{
+    flushChange();
+    if ( shared == shared_ ) {
+        return true;
+    }
+
+    auto& sharedFilters = SharedFilters::instance();
+    if ( shared ) {
+        // The own filters of the tab are kept aside as they are, also unsaved changes: the
+        // shared filters started here take them too (untitled), the tab gets them back when it
+        // leaves. They are asked about when the tab is closed.
+        auto own = tabState();
+        shared_ = true;
+        setPrivateState( std::move( own ) );
+        if ( sharedFilters.isInitialized() ) {
+            showSharedFilters( privateState_ );
+            Q_EMIT filtersChanged();
+        }
+        else {
+            seedShared();
+        }
+    }
+    else {
+        // The tab using the shared filters last is asked to save them
+        if ( !sharedFilters.hasOtherUsers( sharedUser() ) && !confirmClose( {} ) ) {
+            return false;
+        }
+
+        auto own = privateState_;
+        own.shared = false;
+        own.hits = hits_;
+        saveTreeView( own );
+        setTabState( own );
+        Q_EMIT filtersChanged();
+    }
+
+    sharedFilters.setUser( sharedUser(), shared_ );
+    updateSharedAction();
+    updateFileLabel();
+    return true;
+}
+
+void FilterPanel::seedShared()
+{
+    // The tab keeps its own copy of these filters, the shared ones leave its file when they
+    // change. Changes not saved yet (restored session) leave it right away.
+    sharedCopy_ = true;
+    if ( isModified() ) {
+        detachSharedCopy();
+    }
+    pushShared( buildTree() );
+    updateFileLabel();
+}
+
+void FilterPanel::detachSharedCopy()
+{
+    // Untitled: saving the shared filters asks for a file
+    sharedCopy_ = false;
+    currentFile_.clear();
+    fileChanged_ = false;
+    savedJson_ = serialize( FilterNode::makeGroup( "root" ) );
+}
+
+void FilterPanel::pushShared( const FilterNode& root )
+{
+    FilterTabState state;
+    state.file = currentFile_;
+    state.root = root;
+    state.savedJson = savedJson_;
+    state.json = treeJson_;
+    state.snapshot = snapshot_;
+    state.fileChanged = fileChanged_;
+    state.copyOfFile = sharedCopy_;
+    SharedFilters::instance().setState( std::move( state ), this );
+}
+
+void FilterPanel::showSharedFilters( const FilterTabState& view )
+{
+    // A change still waiting here would be lost
+    flushChange();
+
+    const auto& shared = SharedFilters::instance().state();
+    currentFile_ = shared.file;
+    savedJson_ = shared.savedJson;
+    treeJson_ = shared.json.isEmpty() ? serialize( shared.root ) : shared.json;
+    fileChanged_ = shared.fileChanged;
+    sharedCopy_ = shared.copyOfFile;
+    setRoot( shared.root );
+    restoreTreeView( view );
+    snapshot_ = shared.snapshot;
+    updateFileLabel();
+}
+
+void FilterPanel::updateSharedAction()
+{
+    const QSignalBlocker blocker( sharedAction_ );
+    sharedAction_->setChecked( shared_ );
+}
+
+bool FilterPanel::openFiltersFile( const QString& path, bool confirm )
+{
+    return ( !confirm || confirmClose( {} ) ) && loadFile( path, false );
+}
+
+void FilterPanel::appendFilters( const std::vector<FilterNode>& filters )
+{
+    flushChange();
+    for ( const auto& filter : filters ) {
+        tree_->addTopLevelItem( createItem( filter ) );
+    }
+    changeTimer_.stop();
+    publishChange();
 }

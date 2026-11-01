@@ -65,9 +65,23 @@
 class QAction;
 class QActionGroup;
 class Session;
+
+// What a command line asks of a window
+struct WindowCommand {
+    // Opened in tabs, the other options apply to each of them (or to the current tab when
+    // there are none)
+    std::vector<QString> files;
+    bool follow = false;
+    // From 1, 0 for none
+    uint64_t line = 0;
+    QString filtersFile;
+    std::vector<FilterNode> addedFilters;
+    bool sharedFilters = false;
+};
 class RecentFiles;
 class QDockWidget;
 class FilterPanel;
+struct UnsavedFilters;
 
 // Main window of the application, creates menus, toolbar and
 // the CrawlerWidget
@@ -88,6 +102,42 @@ class MainWindow : public QMainWindow {
     void reTranslateUI();
 
     static int installLanguage( QString lang );
+
+    // Number of the window shown in its title (#2) and used by the command line
+    int windowNumber() const
+    {
+        return static_cast<int>( session_.windowIndex() ) + 1;
+    }
+
+    // Name given by the user, shown in the title instead of the file name
+    QString windowName() const
+    {
+        return windowName_;
+    }
+    void setWindowName( const QString& name );
+
+    struct TabInfo {
+        QString file;
+        bool current = false;
+        bool sharedFilters = false;
+        // Empty when the tab was never shown
+        QString filtersFile;
+    };
+    // In tab order
+    std::vector<TabInfo> tabInfos() const;
+
+    // Brings the window to the front, also from another application
+    void bringToFront();
+
+    void runCommand( const WindowCommand& command );
+
+    // Unsaved filters of the window lost when every window is closed
+    std::vector<UnsavedFilters> unsavedFiltersOnExit();
+    // The filters were asked about for every window, closing the window does not ask again
+    void setFiltersConfirmed( bool confirmed )
+    {
+        filtersConfirmed_ = confirmed;
+    }
 
   public Q_SLOTS:
     // Load a file in a new tab (non-interactive)
@@ -191,12 +241,23 @@ class MainWindow : public QMainWindow {
     void exitRequested();
 
   private:
+    void renameWindow();
+    void updateWindowMenu();
+    void applyOptionsToOtherWindows( bool reloadFilterSettings );
+
     void setupFilterPanel();
     void applyFiltersToCurrentCrawler();
     void switchFilterTab( CrawlerWidget* crawler );
-    // Asks to save the changed filters of the tab, false when the user cancels
-    bool confirmFiltersClose( CrawlerWidget* crawler );
-    bool confirmAllFiltersClose();
+    std::vector<CrawlerWidget*> crawlers() const;
+    // Unsaved filters lost when the tabs are closed: their own filters, and the shared ones
+    // when no tab left uses them (closingWindow: the other tabs of the window are closed too,
+    // closingAll: every window is closed)
+    std::vector<UnsavedFilters> unsavedFilters( const std::vector<CrawlerWidget*>& tabs,
+                                                bool closingWindow, bool closingAll );
+    // Asks in one question to save the unsaved filters of the tabs, false when the user
+    // cancels
+    bool confirmFiltersClose( const std::vector<CrawlerWidget*>& tabs, const QString& text,
+                              bool closingWindow = false );
     void createActions();
     void loadIcons();
     void createMenus();
@@ -208,6 +269,7 @@ class MainWindow : public QMainWindow {
     bool extractAndLoadFile( const QString& fileName );
     void openRemoteFile( const QUrl& url );
     void updateTitleBar( const QString& fileName );
+    void refreshTitleBar();
     void addRecentFile( const QString& fileName );
     void updateRecentFileActions();
     void clearRecentFileActions();
@@ -226,6 +288,7 @@ class MainWindow : public QMainWindow {
     void updateShortcuts();
 
     WindowSession session_;
+    QString windowName_;
     QString loadingFileName;
 
     std::array<QAction*, MAX_RECENT_FILES> recentFileActions;
@@ -237,6 +300,7 @@ class MainWindow : public QMainWindow {
     QMenu* viewMenu;
     QMenu* toolsMenu;
     QMenu* favoritesMenu;
+    QMenu* windowMenu;
     QMenu* openedFilesMenu;
     QMenu* helpMenu;
 
@@ -323,6 +387,8 @@ class MainWindow : public QMainWindow {
 
     bool isMaximized_ = false;
     bool isCloseFromTray_ = false;
+    // See setFiltersConfirmed, also set while the tabs are closed by closeAll
+    bool filtersConfirmed_ = false;
 
     std::once_flag screenChangesConnect_;
 };

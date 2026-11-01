@@ -2,7 +2,7 @@
 
 **English** | [繁體中文](README.zh-TW.md)
 
-flogg is a log viewer built on [klogg](https://github.com/variar/klogg). It keeps klogg's fast file reading and search, and adds a more customisable [TextAnalysisTool](https://textanalysistool.github.io/) style filter panel.
+flogg is a log viewer built on [klogg](https://github.com/variar/klogg). It keeps klogg's fast file reading and search, and adds a more customisable [TextAnalysisTool (TAT)](https://textanalysistool.github.io/) style filter panel.
 
 ![flogg with the filter panel](docs/images/filter-panel.png)
 
@@ -10,15 +10,26 @@ Downloads for Windows (x64) and macOS (Apple Silicon) are on the [releases page]
 
 ## Features
 
-### Filter panel: a TAT style, easier to manage filter list
+### Filter panel: a more advanced and convenient TAT style filter manager
 
-- Filters are organised in nested groups.
-- Each filter has a pattern (text or regex), case sensitivity, an exclude option and foreground/background colours, applied to the whole line or to the match only.
-- Enable or disable single filters, whole groups, or everything at once; a filter can also be suspended temporarily without changing whether it is enabled. Saving the filter file keeps both the enabled and the suspended states.
+- Filters are organised in a tree of groups.
+- Each tab has its own filters, and different filter files can be loaded in different tabs.
+- A filter can be suspended to turn it off temporarily, without changing whether it is enabled.
 - With filters selected, `F8` / `Shift+F8` in the main or filtered view jumps between their matching lines.
+- `🔗Shared` (shared mode):
+   - Lets tabs share one set of filters: every tab in shared mode, in any window, sees a change made in any of them right away, saved or not.
+   - The first tab put in shared mode copies its own filters as the shared filters; on their first change they become untitled, so saving them asks for a file name instead of overwriting the filter file of the tab. Leaving shared mode brings the own filters of the tab back. When the last tab leaves shared mode, the shared filters are cleared.
+
+### Main and filtered views
+
 - Hovering a line of the log views lists the filters matching it with their numbers, in priority order.
-- Right click the column header to choose the visible columns; each column resizes independently and the widths are saved.
-- `🔗Shared` (right of the arrow buttons) makes tabs share their filters: every tab in shared mode, in any window, shows the same filters, and a change made in one of them shows in all of them right away, saved or not. The first tab shared starts them as a copy of its own filters; on their first change they become untitled, so saving them asks for a file instead of overwriting the file of the tab. The own filters of the tab come back when `🔗Shared` is turned off (if they were changed, turning shared mode on asks to save them first). Tabs using the shared filters and their windows show the link icon 🔗.
+- The selected line stands out more clearly.
+- When the line selected in the main view is also a match in the filtered view, the filtered view selects it too (klogg only moved the main view along with the filtered view).
+- `Ctrl+click` (macOS: `Cmd+click`) selects lines that do not follow each other.
+- The filter panel and klogg's own search box are used one at a time; switch with the `Filters` button at the left end of the search bar above the filtered view.
+- In the main and filtered views, `Ctrl+1-8` sets bookmarks and `Alt+1-8` / `Shift+Alt+1-8` jump to the next / previous line with that bookmark.
+  (Changing them in `File > Preferences > Shortcuts` is recommended; flogg keeps klogg's own shortcuts by default.)
+- `Ctrl+H` (macOS: `Control+H`) hides the main view and shows the filtered view only.
 
 ### Fast filtering: searching and filtering as fast as klogg
 
@@ -26,20 +37,9 @@ Downloads for Windows (x64) and macOS (Apple Silicon) are on the [releases page]
 - Each filter keeps its search result in a Roaring Bitmap (as in klogg), which adapts its layout to how dense the matches are to keep memory use low.
 - The final result is the union of the included filters minus the excluded ones. Enabling, disabling or suspending filters only recombines the bitmaps without rescanning, and adding or editing a filter rescans that pattern only.
 
-### Bookmarks and views
-
-- The filter panel and klogg's own search box are used one at a time; switch with the `Filters` button at the left end of the search bar above the filtered view.
-- In the main and filtered views, `Ctrl+1-8` sets bookmarks and `Alt+1-8` / `Shift+Alt+1-8` jump to the next / previous line with that bookmark.
-  (Shortcuts can be changed in `File > Preferences > Shortcuts`; flogg keeps klogg's own shortcuts by default.)
-- `Ctrl+H` (macOS: `Control+H`) hides the main view and shows the filtered view only.
-- `Ctrl+click` (macOS: `Cmd+click`) adds or removes single lines from the selection, for copying, marking or saving lines that do not follow each other.
-- Context menu entries show their current shortcut.
-
 ### Filter and conf files
 
 - Each tab has its own filters: the list, enabled, disabled and suspended states, and the JSON filter file it uses. A newly opened file gets the default filter file, `filters.flogg-filters.json` unless another one was opened or saved last (see [Command line](#command-line) for where it is).
-- Filters are saved to their file only with `Save filters` (`Ctrl+S` in the filter panel); a `*` after the file name marks unsaved changes, and closing a tab or flogg asks to save them. Changed shared filters are only asked about when the last tab using them is closed.
-- When a tab saves a filter file, the other tabs using that file take the saved filters, unless they have unsaved changes: those are marked `(saved by another tab)`. Saving a file that was changed since it was loaded (by another tab or program) asks whether to overwrite it or reload it.
 - Import TextAnalysisTool `.tat` files.
 - Import klogg predefined filters and highlighters.
 - Application settings (UI, shortcuts and so on) are kept in `flogg.conf` by default (see [Command line](#command-line) for where it is).
@@ -53,8 +53,12 @@ Downloads for Windows (x64) and macOS (Apple Silicon) are on the [releases page]
 
 ### Command line
 
+- On Windows the settings (`flogg.conf`) and the default filter file are kept next to `flogg.exe`, so the whole folder is portable.
+- On macOS they follow the system conventions: the settings are in `~/Library/Preferences/com.flogg.flogg.plist` and the default filter file in
+  `~/Library/Application Support/flogg/filters.flogg-filters.json`; with `--config` the default filter file goes next to that settings file.
+
 - `--config <file>` reads and writes the settings in that file (any name) instead of the default `flogg.conf`; the session goes to `<name>_session.conf` next to it.
-- The previous session is not restored by default. With `Load last session` in `File > Preferences`, flogg started without a file restores the windows (with their names), files and per tab filters open when it was closed last; `-s` / `-n` force it on or off.
+- The previous session is not restored by default. With `Load last session` in `File > Preferences`, the first flogg started without a file restores the windows (with their names), files and per tab filters open when it was closed last; `-s` / `-n` force it on or off.
 
 Commands for the windows of a running flogg (`flogg --help` lists everything):
 
@@ -62,7 +66,7 @@ Commands for the windows of a running flogg (`flogg --help` lists everything):
 | --- | --- |
 | `flogg a.log b.log` | Opens the files in a new window |
 | `-L`, `--list-windows` (`--json`) | Lists the windows: id, name and tabs (`*` current tab) |
-| `-w`, `--window <id\|name>` | Opens the files as tabs of that window (id like `2` or `#2`, or its name); without files the options below apply to its current tab |
+| `-w`, `--window <id\|name>` | Opens the files as tabs of the given window (id like `2` or `#2`, or its name); without files the options below apply to its current tab |
 | `--window-name <name>` | Names the new window, or renames the `--window` one |
 | `--filters <file>` | Loads the filters of the opened tabs from that file, without making it the default one |
 | `--add-filter <text>`, `--add-regex <regex>` | Adds filters to the opened tabs (can be repeated); `--filter-color <color>` gives them a background colour |
@@ -71,9 +75,6 @@ Commands for the windows of a running flogg (`flogg --help` lists everything):
 | `-f`, `--follow` | Follows the opened files |
 
 For example `flogg -w wifi --add-regex "wlan\d" --line 1200 kernel.log` opens `kernel.log` in the window named `wifi`, adds a filter and selects line 1200. Errors (unknown window, missing file, invalid regex) are printed and nothing is done.
-- On Windows the settings (`flogg.conf`) and the default filter file are kept next to `flogg.exe`, so the whole folder is portable.
-- On macOS they follow the system conventions: the settings are in `~/Library/Preferences/com.flogg.flogg.plist` and the default filter file in
-  `~/Library/Application Support/flogg/filters.flogg-filters.json`; with `--config` the default filter file goes next to that settings file.
 
 ### Removed from klogg
 

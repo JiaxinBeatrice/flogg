@@ -1844,6 +1844,21 @@ void AbstractLogView::selectPortionAndDisplayLine( LineNumber line, LinesCount n
     Q_EMIT newSelection( line, nLines, startCol, nSymbols );
 }
 
+void AbstractLogView::followSelectionOf( LineNumber line, bool selectLine, bool scroll )
+{
+    if ( selectLine ) {
+        selection_.selectLine( line );
+        selectionStartPos_ = FilePosition{ line, 0_lcol };
+        selectionCurrentEndPos_ = selectionStartPos_;
+    }
+    if ( scroll ) {
+        displayLine( line );
+    }
+    else {
+        update();
+    }
+}
+
 // The difference between this function and displayLine() is quite
 // subtle: this one always jump, even if the line passed is visible.
 void AbstractLogView::jumpToLine( LineNumber line )
@@ -2503,6 +2518,8 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
     int yPos = 0;
     wrappedLinesInfo_.clear();
     klogg::vector<std::pair<QColor, QColor>> highlightColors;
+    auto selectionOverlay = palette.color( QPalette::Active, QPalette::Highlight );
+    selectionOverlay.setAlpha( 90 );
     for ( auto currentLine = 0_lcount; currentLine < nbLines; ++currentLine ) {
         const auto lineNumber = firstLine_ + currentLine;
         QString logLine = logLines[ currentLine.get() ];
@@ -2511,43 +2528,36 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
 
         HighlightedMatchRanges highlighterMatches;
 
-        if ( selection_.isLineSelected( lineNumber ) && !selection_.isSingleLine() ) {
-            // Reverse the selected line
-            foreColor = palette.color( QPalette::HighlightedText );
-            backColor = palette.color( QPalette::Highlight );
-            painter->setPen( palette.color( QPalette::Text ) );
+        // Selected lines keep their colours, the selection overlay covers them
+        foreColor = palette.color( QPalette::Text );
+        backColor = palette.color( QPalette::Base );
+
+        if ( lineNumber < searchStartIndex || lineNumber >= searchEndIndex ) {
+            foreColor = palette.brush( QPalette::Disabled, QPalette::Text ).color();
         }
         else {
-            foreColor = palette.color( QPalette::Text );
-            backColor = palette.color( QPalette::Base );
+            const auto highlightType
+                = highlighterMatcher
+                      ? highlighterSet.matchLine( logLine, highlighterMatches,
+                                                  *highlighterMatcher )
+                      : HighlighterMatchType::NoMatch;
 
-            if ( lineNumber < searchStartIndex || lineNumber >= searchEndIndex ) {
-                foreColor = palette.brush( QPalette::Disabled, QPalette::Text ).color();
+            if ( highlightType == HighlighterMatchType::LineMatch ) {
+                // color applies to whole line, a filter may define only one of the colors
+                const auto& lineMatch = highlighterMatches.front();
+                if ( lineMatch.foreColor().isValid() ) {
+                    foreColor = lineMatch.foreColor();
+                }
+                if ( lineMatch.backColor().isValid() ) {
+                    backColor = lineMatch.backColor();
+                }
             }
-            else {
-                const auto highlightType
-                    = highlighterMatcher
-                          ? highlighterSet.matchLine( logLine, highlighterMatches,
-                                                      *highlighterMatcher )
-                          : HighlighterMatchType::NoMatch;
 
-                if ( highlightType == HighlighterMatchType::LineMatch ) {
-                    // color applies to whole line, a filter may define only one of the colors
-                    const auto& lineMatch = highlighterMatches.front();
-                    if ( lineMatch.foreColor().isValid() ) {
-                        foreColor = lineMatch.foreColor();
-                    }
-                    if ( lineMatch.backColor().isValid() ) {
-                        backColor = lineMatch.backColor();
-                    }
-                }
-
-                // highlighterMatches.reserve( additionalHighlighters.size() );
-                for ( const auto& highlighter : additionalHighlighters ) {
-                    klogg::vector<HighlightedMatch> patternMatches;
-                    highlighter.matchLine( logLine, patternMatches );
-                    highlighterMatches.addMatches( patternMatches );
-                }
+            // highlighterMatches.reserve( additionalHighlighters.size() );
+            for ( const auto& highlighter : additionalHighlighters ) {
+                klogg::vector<HighlightedMatch> patternMatches;
+                highlighter.matchLine( logLine, patternMatches );
+                highlighterMatches.addMatches( patternMatches );
             }
         }
 
@@ -2666,8 +2676,12 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         lineDrawer.draw( painter.get(), xPos, yPos, viewport()->width(), wrappedLineView,
                          ContentMarginWidth );
 
-        if ( ( selection_.isLineSelected( lineNumber ) && selection_.isSingleLine() )
-             || selection_.getPortionForLine( lineNumber ).isValid() ) {
+        if ( selection_.isLineSelected( lineNumber ) ) {
+            // Translucent like the selection of the filter panel
+            painter->fillRect( xPos - ContentMarginWidth, yPos, viewport()->width(),
+                               finalLineHeight, selectionOverlay );
+        }
+        else if ( selection_.getPortionForLine( lineNumber ).isValid() ) {
             auto selectionPen = QPen( palette.color( QPalette::Highlight ) );
             selectionPen.setWidth( 1 );
             painter->setPen( selectionPen );

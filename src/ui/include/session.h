@@ -227,12 +227,16 @@ class WindowSession {
     // Get the geometry string from persistent storage for this session.
     void restoreGeometry( QByteArray* geometry ) const;
 
+    // Name given to the window by the user, from persistent storage
+    QString restoreName() const;
+
     // Save the session to persistent storage. An ordered list of
     // (view, topline, ViewContextInterface) is passed, this is because only
     // the main window know the order in which the views are presented to
     // the user (it might have changed since file were opened).
     // Also, the geometry information is passed as an opaque string.
-    void save( const std::vector<SaveFileInfo>& view_list, const QByteArray& geometry );
+    void save( const std::vector<SaveFileInfo>& view_list, const QByteArray& geometry,
+               const QString& name );
 
     // returns true if caller needs to save settings
     bool close();

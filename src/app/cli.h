@@ -22,11 +22,14 @@
 
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <vector>
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 
@@ -34,6 +37,7 @@
 #include "log.h"
 
 struct CliParameters {
+    bool multi_instance = false;
     bool new_session = false;
     bool load_session = false;
     bool log_to_file = false;
@@ -50,6 +54,20 @@ struct CliParameters {
     QString pattern;
 
     QString filters_file;
+
+    // Commands for the windows of the running flogg
+    bool list_windows = false;
+    bool json = false;
+    QString window;
+    std::optional<QString> window_name;
+    QStringList added_filters;
+    QStringList added_regexes;
+    QString filter_color;
+    bool shared_filters = false;
+    uint64_t line = 0;
+
+    // Set when the command line is invalid
+    QString error;
 
     static constexpr auto ConfigOptionName = "config";
 
@@ -85,7 +103,44 @@ struct CliParameters {
         const QCommandLineOption multiInstanceOption(
             QStringList() << "m"
                           << "multi",
-            "kept for compatibility: every start is a new instance of flogg" );
+            "start a separate flogg, instead of opening a new window in the flogg already "
+            "running with the same settings (its windows can't be listed or targeted)" );
+
+        const QCommandLineOption listWindowsOption(
+            QStringList() << "L"
+                          << "list-windows",
+            "list the windows of the running flogg (id, name, tabs) and exit" );
+
+        const QCommandLineOption jsonOption( "json", "print --list-windows as JSON" );
+
+        const QCommandLineOption windowOption(
+            QStringList() << "w"
+                          << "window",
+            "open the files as tabs of this window of the running flogg (its id from "
+            "--list-windows, like 2 or #2, or its name) instead of a new window; without "
+            "files the options apply to its current tab",
+            "id|name" );
+
+        const QCommandLineOption windowNameOption(
+            "window-name", "name of the new window (or of the --window one), shown in its title",
+            "name" );
+
+        const QCommandLineOption addFilterOption(
+            "add-filter", "add a text filter to the opened tabs (can be repeated)", "text" );
+
+        const QCommandLineOption addRegexOption(
+            "add-regex", "add a regular expression filter to the opened tabs (can be repeated)",
+            "regex" );
+
+        const QCommandLineOption filterColorOption(
+            "filter-color", "background colour of the filters added, like orange or #ffa500",
+            "color" );
+
+        const QCommandLineOption sharedFiltersOption(
+            "shared-filters", "the opened tabs use the filters shared by all windows" );
+
+        const QCommandLineOption lineOption( "line", "select this line (from 1) in the opened tabs",
+                                             "number" );
 
         const QCommandLineOption configOption(
             ConfigOptionName,
@@ -94,7 +149,9 @@ struct CliParameters {
             "file" );
 
         const QCommandLineOption filtersOption(
-            "filters", "load the filters from this file, without making it the default one",
+            "filters",
+            "load the filters of the opened tabs from this file, without making it the default "
+            "one",
             "file" );
 
         const QCommandLineOption loadSessionOption(
@@ -127,11 +184,11 @@ struct CliParameters {
 
         parser.addOption( debugOption );
 
+        const QCommandLineOption windowWidthOption( "window-width", "new window width", "1024" );
+        const QCommandLineOption windowHeightOption( "window-height", "new window height",
+                                                     "768" );
+
         if ( !console ) {
-            const QCommandLineOption windowWidthOption( "window-width", "new window width",
-                                                        "1024" );
-            const QCommandLineOption windowHeightOption( "window-height", "new window height",
-                                                         "768" );
             parser.addOption( multiInstanceOption );
             parser.addOption( loadSessionOption );
             parser.addOption( newSessionOption );
@@ -141,6 +198,15 @@ struct CliParameters {
             parser.addOption( windowHeightOption );
             parser.addOption( configOption );
             parser.addOption( filtersOption );
+            parser.addOption( listWindowsOption );
+            parser.addOption( jsonOption );
+            parser.addOption( windowOption );
+            parser.addOption( windowNameOption );
+            parser.addOption( addFilterOption );
+            parser.addOption( addRegexOption );
+            parser.addOption( filterColorOption );
+            parser.addOption( sharedFiltersOption );
+            parser.addOption( lineOption );
         }
         else {
             parser.addOption( patternOption );
@@ -182,6 +248,31 @@ struct CliParameters {
             if ( parser.isSet( filtersOption ) ) {
                 filters_file = QFileInfo( parser.value( filtersOption ) ).absoluteFilePath();
             }
+
+            multi_instance = parser.isSet( multiInstanceOption );
+            list_windows = parser.isSet( listWindowsOption );
+            json = parser.isSet( jsonOption );
+            window = parser.value( windowOption );
+            if ( parser.isSet( windowNameOption ) ) {
+                window_name = parser.value( windowNameOption );
+            }
+            added_filters = parser.values( addFilterOption );
+            added_regexes = parser.values( addRegexOption );
+            filter_color = parser.value( filterColorOption );
+            shared_filters = parser.isSet( sharedFiltersOption );
+            if ( parser.isSet( lineOption ) ) {
+                bool ok = false;
+                line = parser.value( lineOption ).toULongLong( &ok );
+                if ( !ok || line == 0 ) {
+                    error = "--line takes a line number from 1";
+                }
+            }
+            if ( parser.isSet( windowWidthOption ) ) {
+                window_width = parser.value( windowWidthOption ).toInt();
+            }
+            if ( parser.isSet( windowHeightOption ) ) {
+                window_height = parser.value( windowHeightOption ).toInt();
+            }
         }
         else {
 
@@ -194,6 +285,39 @@ struct CliParameters {
             const auto fileInfo = QFileInfo( file );
             filenames.emplace_back( fileInfo.absoluteFilePath() );
         }
+    }
+
+    // Whether the command line only makes sense for the windows of a running flogg
+    bool targetsRunningInstance() const
+    {
+        return list_windows || !window.isEmpty();
+    }
+
+    // The command line as sent to the running flogg
+    QJsonObject toRequest() const
+    {
+        QJsonObject request;
+        request[ "list" ] = list_windows;
+        request[ "json" ] = json;
+        request[ "window" ] = window;
+        if ( window_name ) {
+            request[ "windowName" ] = *window_name;
+        }
+        QJsonArray files;
+        for ( const auto& file : filenames ) {
+            files.append( file );
+        }
+        request[ "files" ] = files;
+        request[ "follow" ] = follow_file;
+        request[ "line" ] = static_cast<qint64>( line );
+        request[ "filters" ] = filters_file;
+        request[ "addFilters" ] = QJsonArray::fromStringList( added_filters );
+        request[ "addRegexes" ] = QJsonArray::fromStringList( added_regexes );
+        request[ "filterColor" ] = filter_color;
+        request[ "shared" ] = shared_filters;
+        request[ "width" ] = window_width;
+        request[ "height" ] = window_height;
+        return request;
     }
 
     // Release version without the build number: 1.0.0 for 1.0.0.3

@@ -352,7 +352,6 @@ void OptionsDialog::updateDialogFromConfig()
     loadLastSessionCheckBox->setChecked( config.loadLastSession() );
     followFileOnLoadCheckBox->setChecked( config.followFileOnLoad() );
     minimizeToTrayCheckBox->setChecked( config.minimizeToTray() );
-    multipleWindowsCheckBox->setChecked( config.allowMultipleWindows() );
 
     loggingCheckBox->setChecked( config.enableLogging() );
     verbositySpinBox->setValue( config.loggingLevel() );
@@ -583,7 +582,6 @@ void OptionsDialog::updateConfigFromDialog()
 
     config.setLoadLastSession( loadLastSessionCheckBox->isChecked() );
     config.setFollowFileOnLoad( followFileOnLoadCheckBox->isChecked() );
-    config.setAllowMultipleWindows( multipleWindowsCheckBox->isChecked() );
     config.setMinimizeToTray( minimizeToTrayCheckBox->isChecked() );
     config.setEnableLogging( loggingCheckBox->isChecked() );
     config.setLoggingLevel( verbositySpinBox->value() );

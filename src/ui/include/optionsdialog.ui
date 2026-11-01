@@ -161,7 +161,7 @@
           <item row="0" column="0">
            <widget class="QCheckBox" name="loadLastSessionCheckBox">
             <property name="toolTip">
-             <string>Only the first flogg started without a file restores the windows and files of the last one closed</string>
+             <string>When flogg starts without a file, it restores the windows and files open when it was closed last</string>
             </property>
             <property name="text">
              <string>Load last session</string>
@@ -172,13 +172,6 @@
            <widget class="QCheckBox" name="followFileOnLoadCheckBox">
             <property name="text">
              <string>Follow file on load</string>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="1">
-           <widget class="QCheckBox" name="multipleWindowsCheckBox">
-            <property name="text">
-             <string>Enable multiple windows</string>
             </property>
            </widget>
           </item>

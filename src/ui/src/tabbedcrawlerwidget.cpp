@@ -25,6 +25,7 @@
 #include <QFileInfo>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMenu>
 #include <qobjectdefs.h>
 #include <qpoint.h>
@@ -52,7 +53,9 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     , newfiltered_icon_( ":/images/newfiltered_icon.png" )
 {
 
-    QString tabStyle = "QTabBar::tab { height: 24px; }";
+    // The styles draw the labels of the tabs a few pixels low: below 28 pixels the bottom of
+    // the text is cut on macOS, their natural height (32) is taller than needed
+    QString tabStyle = "QTabBar::tab { height: 28px; }";
     QString tabCloseButtonStyle = " QTabBar::close-button {\
               height: 12px; width: 12px;\
               subcontrol-origin: padding;\
@@ -107,7 +110,12 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     connect( &myTabBar_, &CrawlerTabBar::showTabContextMenu, this,
              &TabbedCrawlerWidget::showContextMenu );
 
-    dispatchToMainThread( [ this ] { loadIcons(); } );
+    // Queued: tabs stop using the shared filters while their window is destroyed
+    connect( &SharedFilters::instance(), &SharedFilters::usersChanged, this,
+             &TabbedCrawlerWidget::updateSharedMarks, Qt::QueuedConnection );
+
+    // Dropped when the widget is destroyed first
+    dispatchToObject( [ this ] { loadIcons(); }, this );
 }
 
 void TabbedCrawlerWidget::loadIcons()
@@ -117,12 +125,55 @@ void TabbedCrawlerWidget::loadIcons()
     for ( int tab = 0; tab < count(); ++tab ) {
         updateIcon( tab );
     }
+
+    // Drawn again in the colours of the style
+    shared_icon_ = sharedFiltersIcon( palette().color( QPalette::Active, QPalette::Highlight ) );
+    for ( int tab = 0; tab < count(); ++tab ) {
+        for ( const auto side : { QTabBar::LeftSide, QTabBar::RightSide } ) {
+            if ( auto* mark = qobject_cast<QLabel*>( myTabBar_.tabButton( tab, side ) ) ) {
+                myTabBar_.setTabButton( tab, side, nullptr );
+                mark->deleteLater();
+            }
+        }
+    }
+    updateSharedMarks();
+}
+
+void TabbedCrawlerWidget::updateSharedMarks()
+{
+    if ( shared_icon_.isNull() ) {
+        shared_icon_
+            = sharedFiltersIcon( palette().color( QPalette::Active, QPalette::Highlight ) );
+    }
+
+    // On the side without the close button
+    const auto closeSide = static_cast<QTabBar::ButtonPosition>(
+        myTabBar_.style()->styleHint( QStyle::SH_TabBar_CloseButtonPosition, nullptr, &myTabBar_ ) );
+    const auto markSide = closeSide == QTabBar::LeftSide ? QTabBar::RightSide : QTabBar::LeftSide;
+
+    const auto& sharedFilters = SharedFilters::instance();
+    for ( int tab = 0; tab < count(); ++tab ) {
+        const auto isShared = sharedFilters.isUser( widget( tab ) );
+        auto* mark = qobject_cast<QLabel*>( myTabBar_.tabButton( tab, markSide ) );
+        if ( isShared && !mark ) {
+            mark = new QLabel;
+            mark->setPixmap( shared_icon_.pixmap( QSize( 16, 16 ), devicePixelRatioF() ) );
+            mark->setToolTip( tr( "Uses the shared filters" ) );
+            // Clicks select the tab
+            mark->setAttribute( Qt::WA_TransparentForMouseEvents );
+            myTabBar_.setTabButton( tab, markSide, mark );
+        }
+        else if ( !isShared && mark ) {
+            myTabBar_.setTabButton( tab, markSide, nullptr );
+            mark->deleteLater();
+        }
+    }
 }
 
 void TabbedCrawlerWidget::changeEvent( QEvent* event )
 {
     if ( event->type() == QEvent::StyleChange ) {
-        dispatchToMainThread( [ this ] { loadIcons(); } );
+        dispatchToObject( [ this ] { loadIcons(); }, this );
     }
 
     QWidget::changeEvent( event );
@@ -134,6 +185,7 @@ void TabbedCrawlerWidget::addTabBarItem( int index, const QString& fileName )
     const auto tabName = TabNameMapping::getSynced().tabName( fileName );
 
     myTabBar_.setTabIcon( index, olddata_icon_ );
+    updateSharedMarks();
     myTabBar_.setTabText( index, tabName.isEmpty() ? tabLabel : tabName );
     myTabBar_.setTabToolTip( index, QDir::toNativeSeparators( fileName ) );
 

@@ -42,6 +42,8 @@ struct WatchedFile {
     std::string name;
     int64_t mTime;
     int64_t size;
+    // Tabs watching the file, the same file can be open in several windows
+    int users = 1;
 
     bool operator==( const std::string& filename ) const
     {
@@ -140,10 +142,11 @@ class EfswFileWatcher final : public efsw::FileWatchListener {
                 watchedDirectory->watchId = tryWatchDirectory( directory );
             }
 
-            if ( std::find( watchedDirectory->files.begin(), watchedDirectory->files.end(),
-                            watchedFile.name )
-                 != watchedDirectory->files.end() ) {
+            auto existingFile = std::find( watchedDirectory->files.begin(),
+                                           watchedDirectory->files.end(), watchedFile.name );
+            if ( existingFile != watchedDirectory->files.end() ) {
                 LOG_DEBUG << "already watching " << watchedFile.name << " in " << directory;
+                ++existingFile->users;
                 return;
             }
 
@@ -177,6 +180,9 @@ class EfswFileWatcher final : public efsw::FileWatchListener {
             auto watchedFile = std::find( files.begin(), files.end(), filename );
 
             if ( watchedFile != files.end() ) {
+                if ( --watchedFile->users > 0 ) {
+                    return;
+                }
                 files.erase( watchedFile );
             }
 
@@ -222,7 +228,8 @@ class EfswFileWatcher final : public efsw::FileWatchListener {
                         LOG_INFO << "will notify for " << path;
                     }
 
-                    file = std::move( watchedFile );
+                    file.mTime = watchedFile.mTime;
+                    file.size = watchedFile.size;
                 }
             }
 

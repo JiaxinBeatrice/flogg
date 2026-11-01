@@ -309,6 +309,12 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     // being on the screen or not. (does NOT Q_EMIT followDisabled() )
     void jumpToLine( LineNumber line );
 
+    // Follows a selection made in another view: selects the line if asked,
+    // and scrolls to it if asked and it is off screen. Unlike
+    // selectAndDisplayLine() it does not disable follow mode nor
+    // Q_EMIT newSelection().
+    void followSelectionOf( LineNumber line, bool selectLine, bool scroll );
+
     // Configure the setting of whether to show line number margin
     void setLineNumbersVisible( bool lineNumbersVisible );
 

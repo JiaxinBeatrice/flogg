@@ -40,6 +40,7 @@
 #include "crawlerwidget.h"
 #include "filterpanel.h"
 #include "infoline.h"
+#include "overviewwidget.h"
 #include "styles.h"
 
 #include <QToolTip>
@@ -229,6 +230,39 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
         crawler->findFilterMatch( filterNodes, false );
     }
 
+    // Rows of the overview with matches, for an overview of the passed height
+    std::vector<int> overviewMatchRows( unsigned height )
+    {
+        crawler->overview_.updateView( height );
+        std::vector<int> rows;
+        for ( const auto& line : *crawler->overview_.getMatchLines() ) {
+            rows.push_back( line.position() );
+        }
+        return rows;
+    }
+
+    // Rows of the drawn overview with red (match) pixels
+    std::vector<int> overviewRedRows()
+    {
+        const auto image = crawler->overviewWidget_->grab().toImage();
+        std::vector<int> rows;
+        for ( int y = 0; y < image.height(); ++y ) {
+            for ( int x = 2; x < image.width() - 2; ++x ) {
+                const auto color = image.pixelColor( x, y );
+                if ( color.red() > color.green() + 40 && color.red() > color.blue() + 40 ) {
+                    rows.push_back( y );
+                    break;
+                }
+            }
+        }
+        return rows;
+    }
+
+    void showMainViewLine( LineNumber line )
+    {
+        crawler->logMainView_->selectAndDisplayLine( line );
+    }
+
     LogFilteredData* filteredData()
     {
         return crawler->logFilteredData_.get();
@@ -391,6 +425,10 @@ SCENARIO( "Crawler widget bookmarks rendering", "[.render]" )
     }
 
     REQUIRE( crawlerVisitor.grabMainView().save( renderDir + "/bookmarks.png" ) );
+
+    // The selected line is covered by a translucent highlight
+    crawlerVisitor.showMainViewLine( 4_lnum );
+    REQUIRE( crawlerVisitor.grabMainView().save( renderDir + "/selected_line.png" ) );
 }
 
 SCENARIO( "Crawler widget filter tool tip", "[ui]" )
@@ -573,6 +611,31 @@ SCENARIO( "Crawler widget filter jump in the filtered view", "[ui]" )
     } ) );
 }
 
+SCENARIO( "Crawler widget filtered view follows the main view selection", "[ui]" )
+{
+    QTemporaryFile file{ "crawler_test_XXXXXX" };
+    REQUIRE( generateDataFiles( file ) );
+
+    Session session;
+    CrawlerWidgetVisitor crawlerVisitor;
+    crawlerVisitor.crawler.reset( static_cast<CrawlerWidget*>(
+        session.open( file.fileName(), []() { return new CrawlerWidget(); } ) ) );
+    waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } );
+
+    crawlerVisitor.setFilterMode( true );
+    crawlerVisitor.setFilters( { FilterNode::makeFilter( "line 00001" ) } );
+    REQUIRE( waitUiState( [ & ]() { return crawlerVisitor.searchInfo() == "10 matches found"; } ) );
+
+    // A line in the filtered results is selected in the filtered view too
+    crawlerVisitor.showMainViewLine( 13_lnum );
+    CHECK( crawlerVisitor.filteredViewSelectedText().endsWith( "line 000013" ) );
+
+    // A line out of the results leaves the filtered selection alone
+    crawlerVisitor.showMainViewLine( 50_lnum );
+    CHECK( crawlerVisitor.filteredViewSelectedText().endsWith( "line 000013" ) );
+    CHECK( crawlerVisitor.mainViewSelectedText().endsWith( "line 000050" ) );
+}
+
 SCENARIO( "Crawler widget ctrl+click selection", "[ui]" )
 {
     QTemporaryFile file{ "crawler_test_XXXXXX" };
@@ -672,4 +735,78 @@ SCENARIO( "Crawler widget overview line counts", "[ui]" )
         CHECK( matches == expectedMatches );
         CHECK( marks == expectedMarks );
     }
+}
+
+SCENARIO( "Crawler widget overview follows the filters", "[ui]" )
+{
+    QTemporaryFile file{ "crawler_test_XXXXXX" };
+    REQUIRE( generateDataFiles( file ) );
+
+    Session session;
+    CrawlerWidgetVisitor crawlerVisitor;
+    crawlerVisitor.crawler.reset( static_cast<CrawlerWidget*>(
+        session.open( file.fileName(), []() { return new CrawlerWidget(); } ) ) );
+    waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } );
+    crawlerVisitor.setFilterMode( true );
+
+    // A single match is drawn
+    crawlerVisitor.setFilters( { FilterNode::makeFilter( "line 000050" ) } );
+    REQUIRE( waitUiState( [ & ]() { return crawlerVisitor.searchInfo() == "1 match found"; } ) );
+    CHECK( crawlerVisitor.overviewMatchRows( 100 ) == std::vector<int>{ 50 } );
+
+    // Another filter with as many matches
+    crawlerVisitor.setFilters( { FilterNode::makeFilter( "line 000060" ) } );
+    QTest::qWait( 500 );
+    CHECK( crawlerVisitor.overviewMatchRows( 100 ) == std::vector<int>{ 60 } );
+}
+
+SCENARIO( "Crawler widget overview draws a single match in a big file", "[ui]" )
+{
+    QTemporaryFile file{ "crawler_big_XXXXXX" };
+    REQUIRE( file.open() );
+    constexpr int NbLines = 3'000'000;
+    {
+        QByteArray content;
+        content.reserve( NbLines * 12 );
+        for ( int i = 0; i < NbLines; ++i ) {
+            content.append( i == NbLines / 2 ? "UNIQUEMARK\n" : "plain line\n" );
+        }
+        file.write( content );
+        file.flush();
+    }
+
+    Session session;
+    CrawlerWidgetVisitor crawlerVisitor;
+    crawlerVisitor.crawler.reset( static_cast<CrawlerWidget*>(
+        session.open( file.fileName(), []() { return new CrawlerWidget(); } ) ) );
+    REQUIRE( waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } ) );
+    crawlerVisitor.crawler->resize( 900, 600 );
+    crawlerVisitor.crawler->show();
+
+    crawlerVisitor.setFilterMode( true );
+    crawlerVisitor.setFilters( { FilterNode::makeFilter( "UNIQUEMARK" ) } );
+    REQUIRE( waitUiState( [ & ]() { return crawlerVisitor.searchInfo() == "1 match found"; } ) );
+    QApplication::processEvents();
+
+    // As the main window does for a new tab
+    crawlerVisitor.crawler->applyConfiguration();
+    QApplication::processEvents();
+    auto* overviewWidget = crawlerVisitor.crawler->findChild<OverviewWidget*>();
+    const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
+    if ( !renderDir.isEmpty() ) {
+        overviewWidget->grab().save( renderDir + "/overview_single_match.png" );
+    }
+    CHECK( crawlerVisitor.overviewMatchRows( static_cast<unsigned>( overviewWidget->height() ) )
+           == std::vector<int>{ overviewWidget->height() / 2 } );
+
+    // Away from the line marking the view, the match is drawn
+    crawlerVisitor.showMainViewLine( 0_lnum );
+    QApplication::processEvents();
+    if ( !renderDir.isEmpty() ) {
+        overviewWidget->grab().save( renderDir + "/overview_single_match_top.png" );
+    }
+    const auto rows = crawlerVisitor.overviewRedRows();
+    INFO( "red rows: " << rows.size() );
+    REQUIRE( rows.size() == 1 );
+    CHECK( std::abs( rows.front() - overviewWidget->height() / 2 ) <= 1 );
 }

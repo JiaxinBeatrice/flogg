@@ -45,7 +45,7 @@ set(MAIN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/cli.h
                  ${KLOGG_QT_TRANSLATION_RES})
 
 set(KLOGG_UI_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/messagereceiver.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/remotecontrol.h
     ${CMAKE_CURRENT_SOURCE_DIR}/kloggapp.h
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
     ${DOCUMENTATION_RESOURCE}

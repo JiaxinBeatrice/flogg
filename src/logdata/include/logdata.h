@@ -171,6 +171,8 @@ class LogData : public AbstractLogData {
     OperationQueue operationQueue_;
 
     QString indexingFileName_;
+    // Added to the file watcher once, which counts the users of each file
+    bool fileWatched_ = false;
     // mutable std::unique_ptr<QFile> attached_file_;
     // mutable FileId attached_file_id_;
 

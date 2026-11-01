@@ -39,6 +39,7 @@ void SessionInfo::retrieveFromStorage( QSettings& settings )
             settings.setArrayIndex( static_cast<int>( windowIndex ) );
             QString windowId = settings.value( "id" ).toString();
             auto window = Window{ windowId };
+            window.name = settings.value( "name" ).toString();
             window.geometry = settings.value( "geometry" ).toByteArray();
 
             if ( settings.contains( "OpenFiles/version" ) ) {
@@ -87,6 +88,7 @@ void SessionInfo::saveToStorage( QSettings& settings ) const
         settings.setArrayIndex( static_cast<int>( windowIndex ) );
 
         settings.setValue( "id", window.id );
+        settings.setValue( "name", window.name );
         settings.setValue( "geometry", window.geometry );
 
         settings.beginGroup( "OpenFiles" );

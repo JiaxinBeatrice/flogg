@@ -97,6 +97,14 @@ LogData::~LogData()
 {
     LOG_DEBUG << "Destroying log data";
     operationQueue_.shutdown();
+
+    if ( fileWatched_ ) {
+        try {
+            FileWatcher::getFileWatcher().removeFile( indexingFileName_ );
+        } catch ( const std::exception& e ) {
+            LOG_ERROR << "Failed to stop watching " << indexingFileName_ << ": " << e.what();
+        }
+    }
 }
 
 void LogData::setPrefilter( const QString& prefilterPattern )
@@ -205,7 +213,10 @@ void LogData::indexingFinished( LoadingStatus status )
              << IndexingData::ConstAccessor{ indexing_data_.get() }.getNbLines() << " lines.";
 
     if ( status == LoadingStatus::Successful ) {
-        FileWatcher::getFileWatcher().addFile( indexingFileName_ );
+        if ( !fileWatched_ ) {
+            FileWatcher::getFileWatcher().addFile( indexingFileName_ );
+            fileWatched_ = true;
+        }
 
         // Update the modified date/time if the file exists
         lastModifiedDate_ = QDateTime();
