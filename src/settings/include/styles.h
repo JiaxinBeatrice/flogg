@@ -20,6 +20,7 @@
 #ifndef KLOGG_STYLES
 #define KLOGG_STYLES
 
+#include <QColor>
 #include <QStringList>
 #include <QLatin1String>
 
@@ -41,6 +42,12 @@ struct StyleManager {
     static QString defaultPlatformStyle();
 
     static void applyStyle( const QString& style );
+
+    // Selected lines of the log views and rows of the filter panel, whatever the style and the
+    // filter colours, so they are always recognised; also the highlight of the other widgets.
+    // From the configuration (View options).
+    static QColor selectionBackColor();
+    static QColor selectionTextColor();
 };
 
 #endif

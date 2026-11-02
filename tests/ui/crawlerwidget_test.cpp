@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 
+#include <QPainter>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QTest>
@@ -30,6 +31,7 @@
 #include <qnamespace.h>
 #include <qtestmouse.h>
 
+#include "configuration.h"
 #include "savedsearches.h"
 #include "session.h"
 #include "test_utils.h"
@@ -263,6 +265,27 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
         crawler->logMainView_->selectAndDisplayLine( line );
     }
 
+    // The search line, with some of its buttons on
+    QImage grabSearchLine()
+    {
+        crawler->matchCaseButton_->setChecked( true );
+        crawler->useRegexpButton_->setChecked( true );
+        crawler->searchRefreshButton_->setChecked( false );
+        auto* line = crawler->searchLineEdit_->parentWidget();
+        const auto top = crawler->searchLineEdit_->mapTo( line, QPoint( 0, 0 ) ).y();
+        return line->grab( QRect( 0, top - 4, line->width(), crawler->searchLineEdit_->height() + 8 ) )
+            .toImage();
+    }
+
+    // A double click on the word at x on a row of the view
+    void doubleClickMainView( int x, int row )
+    {
+        auto* viewport = crawler->logMainView_->viewport();
+        const auto rowHeight = crawler->logMainView_->fontMetrics().height();
+        QTest::mouseDClick( viewport, Qt::LeftButton, {},
+                            QPoint( x, row * rowHeight + rowHeight / 2 ) );
+    }
+
     LogFilteredData* filteredData()
     {
         return crawler->logFilteredData_.get();
@@ -426,9 +449,122 @@ SCENARIO( "Crawler widget bookmarks rendering", "[.render]" )
 
     REQUIRE( crawlerVisitor.grabMainView().save( renderDir + "/bookmarks.png" ) );
 
-    // The selected line is covered by a translucent highlight
     crawlerVisitor.showMainViewLine( 4_lnum );
     REQUIRE( crawlerVisitor.grabMainView().save( renderDir + "/selected_line.png" ) );
+}
+
+// Hidden, saves the selected line among filter colours in both styles:
+// FLOGG_RENDER_DIR=<dir> klogg_itests "[.render]"
+SCENARIO( "Crawler widget selected line rendering", "[.render]" )
+{
+    const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
+    if ( renderDir.isEmpty() ) {
+        WARN( "FLOGG_RENDER_DIR is not set" );
+        return;
+    }
+
+    QTemporaryFile file{ "crawler_test_XXXXXX" };
+    REQUIRE( generateDataFiles( file ) );
+
+    Session session;
+    CrawlerWidgetVisitor crawlerVisitor;
+    crawlerVisitor.crawler.reset( static_cast<CrawlerWidget*>(
+        session.open( file.fileName(), []() { return new CrawlerWidget(); } ) ) );
+    crawlerVisitor.crawler->resize( 700, 400 );
+    waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } );
+
+    auto yellow = FilterNode::makeFilter( "line 00000[2-4]" );
+    yellow.useRegex = true;
+    yellow.backColor = QColor( "#fff3a0" );
+    auto red = FilterNode::makeFilter( "line 00000[6-7]" );
+    red.useRegex = true;
+    red.foreColor = QColor( "#c00000" );
+    auto green = FilterNode::makeFilter( "line 000009" );
+    green.backColor = QColor( "#2e7d32" );
+    green.foreColor = QColor( Qt::white );
+    crawlerVisitor.setFilters( { yellow, red, green } );
+
+    const auto previousPalette = QApplication::palette();
+    const auto previousStyle = QApplication::style()->name();
+    for ( const auto& style : { StyleManager::LightStyleKey, StyleManager::DarkStyleKey } ) {
+        StyleManager::applyStyle( style );
+        QApplication::processEvents();
+        // The selected line inside a filter colour, plain, on a filter, and a selected word
+        const int rowHeight = crawlerVisitor.rowHeight();
+        const QSize cropSize( 330, rowHeight * 11 );
+        QImage sheet( 4 * ( cropSize.width() + 8 ), cropSize.height(), QImage::Format_RGB32 );
+        sheet.fill( QApplication::palette().color( QPalette::Window ) );
+        QPainter painter( &sheet );
+        const auto drawView = [ & ]( int column ) {
+            const auto image = crawlerVisitor.grabMainView();
+            painter.drawImage(
+                QPoint( column * ( cropSize.width() + 8 ), 0 ),
+                image.copy( QRect( QPoint( 0, 0 ), cropSize * image.devicePixelRatio() ) )
+                    .scaled( cropSize ) );
+        };
+        int column = 0;
+        for ( const auto line : { 3_lnum, 6_lnum, 9_lnum } ) {
+            crawlerVisitor.showMainViewLine( line );
+            drawView( column++ );
+        }
+        crawlerVisitor.doubleClickMainView( 220, 3 );
+        drawView( column );
+        painter.end();
+        REQUIRE( sheet.save( QString( "%1/selection_%2.png" ).arg( renderDir, style ) ) );
+        REQUIRE( crawlerVisitor.grabSearchLine().save(
+            QString( "%1/search_buttons_%2.png" ).arg( renderDir, style ) ) );
+    }
+    QApplication::setStyle( previousStyle );
+    QApplication::setPalette( previousPalette );
+}
+
+SCENARIO( "Crawler widget selected line has the configured colours", "[ui]" )
+{
+    QTemporaryFile file{ "crawler_test_XXXXXX" };
+    REQUIRE( generateDataFiles( file ) );
+
+    Session session;
+    CrawlerWidgetVisitor crawlerVisitor;
+    crawlerVisitor.crawler.reset( static_cast<CrawlerWidget*>(
+        session.open( file.fileName(), []() { return new CrawlerWidget(); } ) ) );
+    crawlerVisitor.crawler->resize( 700, 400 );
+    waitUiState( [ & ]() { return crawlerVisitor.isLoadingFinished(); } );
+
+    auto& config = Configuration::get();
+    const auto previousBack = config.selectionBackColor();
+    const auto previousText = config.selectionTextColor();
+    const auto previousPalette = QApplication::palette();
+    const auto previousStyle = QApplication::style()->name();
+
+    const QColor back( "#7a1fa2" );
+    const QColor text( "#ffeb3b" );
+    config.setSelectionBackColor( back );
+    config.setSelectionTextColor( text );
+    StyleManager::applyStyle( StyleManager::LightStyleKey );
+
+    // The other widgets select with the same colours
+    CHECK( QApplication::palette().color( QPalette::Highlight ) == back );
+    CHECK( QApplication::palette().color( QPalette::HighlightedText ) == text );
+
+    crawlerVisitor.showMainViewLine( 2_lnum );
+    const auto image = crawlerVisitor.grabMainView();
+    const auto rowHeight = crawlerVisitor.rowHeight() * image.devicePixelRatio();
+    int backPixels = 0;
+    int textPixels = 0;
+    for ( int y = static_cast<int>( 2 * rowHeight ); y < static_cast<int>( 3 * rowHeight ); ++y ) {
+        for ( int x = 0; x < image.width(); ++x ) {
+            const auto color = image.pixelColor( x, y );
+            backPixels += color == back;
+            textPixels += color == text;
+        }
+    }
+    CHECK( backPixels > image.width() * rowHeight / 2 );
+    CHECK( textPixels > 10 );
+
+    config.setSelectionBackColor( previousBack );
+    config.setSelectionTextColor( previousText );
+    QApplication::setStyle( previousStyle );
+    QApplication::setPalette( previousPalette );
 }
 
 SCENARIO( "Crawler widget filter tool tip", "[ui]" )

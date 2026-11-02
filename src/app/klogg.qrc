@@ -1,5 +1,6 @@
 <RCC>
 <qresource>
+    <file alias="CHANGELOG.md">../../CHANGELOG.md</file>
     <file>i18n/Languages.xml</file>
     <file>images/arrowdown.png</file>
     <file>images/arrowup.png</file>

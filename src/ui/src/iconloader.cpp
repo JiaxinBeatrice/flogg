@@ -73,6 +73,10 @@ QPixmap IconLoader::loadPixmap( QString name, int size ) const
             pmap = invertPixmap( pmap );
         }
     }
+    else if ( !pmap.isNull() && invert ) {
+        // The drawn inverted icons are light grey, white like the others
+        pmap = invertPixmap( pmap );
+    }
     return pmap;
 }
 
@@ -98,8 +102,8 @@ QString IconLoader::makeNonScalableFilename( QString name, int size, bool invert
 
 QPixmap IconLoader::invertPixmap( QPixmap pmap ) const
 {
-    // No suitable inverted icon found for black background; try to
-    // auto-invert the default one
+    // No suitable inverted icon found for black background: the grey parts of the default
+    // one become white (#ffffff, flogg), the coloured ones are kept
     QImage img = pmap.toImage().convertToFormat( QImage::Format_ARGB32 );
     for ( int y = 0; y < img.height(); ++y ) {
         for ( int x = 0; x < img.width(); ++x ) {
@@ -107,7 +111,7 @@ QPixmap IconLoader::invertPixmap( QPixmap pmap ) const
             QColor colour = QColor( qRed( rgba ), qGreen( rgba ), qBlue( rgba ), qAlpha( rgba ) );
             int alpha = colour.alpha();
             if ( colour.saturation() < 5 && colour.alpha() > 10 ) {
-                colour.setHsv( colour.hue(), colour.saturation(), 255 - colour.value() );
+                colour = QColor( Qt::white );
                 colour.setAlpha( alpha );
                 img.setPixel( x, y, colour.rgba() );
             }

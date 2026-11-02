@@ -81,6 +81,7 @@
 #include <tbb/flow_graph.h>
 
 #include "abstractlogview.h"
+#include "styles.h"
 #include "containers.h"
 #include "highlightedmatch.h"
 #include "linetypes.h"
@@ -464,6 +465,12 @@ void AbstractLogView::changeEvent( QEvent* changeEvent )
     if ( changeEvent->type() == QEvent::ActivationChange ) {
         if ( !isActiveWindow() )
             autoScrollTimer_.stop();
+    }
+    else if ( changeEvent->type() == QEvent::PaletteChange
+              || changeEvent->type() == QEvent::StyleChange ) {
+        // The cached text was drawn with the colours of the previous style
+        textAreaCache_.invalid_ = true;
+        pullToFollowCache_.nb_columns_ = 0_length;
     }
     viewport()->update();
 }
@@ -2518,8 +2525,9 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
     int yPos = 0;
     wrappedLinesInfo_.clear();
     klogg::vector<std::pair<QColor, QColor>> highlightColors;
-    auto selectionOverlay = palette.color( QPalette::Active, QPalette::Highlight );
-    selectionOverlay.setAlpha( 90 );
+    // Fixed colours, whatever the filters say
+    const auto selectionTextColor = StyleManager::selectionTextColor();
+    const auto selectionBackColor = StyleManager::selectionBackColor();
     for ( auto currentLine = 0_lcount; currentLine < nbLines; ++currentLine ) {
         const auto lineNumber = firstLine_ + currentLine;
         QString logLine = logLines[ currentLine.get() ];
@@ -2528,11 +2536,16 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
 
         HighlightedMatchRanges highlighterMatches;
 
-        // Selected lines keep their colours, the selection overlay covers them
         foreColor = palette.color( QPalette::Text );
         backColor = palette.color( QPalette::Base );
 
-        if ( lineNumber < searchStartIndex || lineNumber >= searchEndIndex ) {
+        const bool lineSelected = selection_.isLineSelected( lineNumber );
+        if ( lineSelected ) {
+            // Fixed colours, the filters are not matched
+            foreColor = selectionTextColor;
+            backColor = selectionBackColor;
+        }
+        else if ( lineNumber < searchStartIndex || lineNumber >= searchEndIndex ) {
             foreColor = palette.brush( QPalette::Disabled, QPalette::Text ).color();
         }
         else {
@@ -2607,8 +2620,8 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         if ( selectionPortion.isValid() ) {
             allHighlights.addMatch( HighlightedMatch{ selectionPortion.startColumn(),
                                                       selectionPortion.size(),
-                                                      palette.color( QPalette::HighlightedText ),
-                                                      palette.color( QPalette::Highlight ) } );
+                                                      selectionTextColor,
+                                                      selectionBackColor } );
         }
 
         const auto wrappedLineLength
@@ -2676,13 +2689,8 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         lineDrawer.draw( painter.get(), xPos, yPos, viewport()->width(), wrappedLineView,
                          ContentMarginWidth );
 
-        if ( selection_.isLineSelected( lineNumber ) ) {
-            // Translucent like the selection of the filter panel
-            painter->fillRect( xPos - ContentMarginWidth, yPos, viewport()->width(),
-                               finalLineHeight, selectionOverlay );
-        }
-        else if ( selection_.getPortionForLine( lineNumber ).isValid() ) {
-            auto selectionPen = QPen( palette.color( QPalette::Highlight ) );
+        if ( !lineSelected && selection_.getPortionForLine( lineNumber ).isValid() ) {
+            auto selectionPen = QPen( selectionBackColor );
             selectionPen.setWidth( 1 );
             painter->setPen( selectionPen );
             painter->drawLine( xPos - ContentMarginWidth + 1, yPos, viewport()->width(), yPos );

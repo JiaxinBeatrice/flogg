@@ -365,6 +365,15 @@ class Configuration final : public Persistable<Configuration> {
         verifySslPeers_ = verify;
     }
 
+    bool checkForUpdates() const
+    {
+        return checkForUpdates_;
+    }
+    void setCheckForUpdates( bool check )
+    {
+        checkForUpdates_ = check;
+    }
+
     bool forceFontAntialiasing() const
     {
         return forceFontAntialiasing_;
@@ -401,6 +410,24 @@ class Configuration final : public Persistable<Configuration> {
         scaleFactorRounding_ = rounding;
     }
 
+
+    // Selected lines, words and filters, and the selections of the other widgets
+    QColor selectionBackColor() const
+    {
+        return selectionBackColor_;
+    }
+    void setSelectionBackColor( const QColor& color )
+    {
+        selectionBackColor_ = color;
+    }
+    QColor selectionTextColor() const
+    {
+        return selectionTextColor_;
+    }
+    void setSelectionTextColor( const QColor& color )
+    {
+        selectionTextColor_ = color;
+    }
 
     QColor qfBackColor() const
     {
@@ -545,6 +572,7 @@ class Configuration final : public Persistable<Configuration> {
     bool extractArchivesAlways_ = false;
 
     bool verifySslPeers_ = true;
+    bool checkForUpdates_ = true;
 
     bool forceFontAntialiasing_ = false;
     bool enableQtHighDpi_ = true;
@@ -555,6 +583,8 @@ class Configuration final : public Persistable<Configuration> {
     RegexpEngine regexpEngine_ = RegexpEngine::Hyperscan;
 
     QColor qfBackColor_ = Qt::yellow;
+    QColor selectionBackColor_ = QColor( 0x17, 0x7f, 0xd3 );
+    QColor selectionTextColor_ = Qt::white;
 
     bool allowFollowOnScroll_ = true;
     bool autoRunSearchOnPatternChange_ = false;
@@ -575,9 +605,12 @@ class Configuration final : public Persistable<Configuration> {
     std::map<QString, QString> darkPalette_ = {
         {"Window", "#353535"},
         {"WindowText", "#FFFFFF"},
-        {"Base", "#282828"},
+        // Background of the Windows terminal
+        {"Base", "#0C0C0C"},
         {"AlternateBase", "#353535"},
         {"Text", "#FFFFFF"},
+        // Text of the log views and the filter panel, like the Windows terminal
+        {"LogText", "#CCCCCC"},
         {"Button", "#353535"},
         {"ButtonText", "#FFFFFF"},
         {"Link", "#2a82da"},

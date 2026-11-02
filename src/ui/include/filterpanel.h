@@ -360,6 +360,9 @@ class FilterPanel : public QWidget {
     std::vector<FilterNode> selectedFiltersForSearch() const;
 
     bool eventFilter( QObject* watched, QEvent* event ) override;
+    void changeEvent( QEvent* event ) override;
+    // Icons drawn in the colours of the style
+    void loadIcons();
 
     void scheduleChange();
     void publishChange();
@@ -392,7 +395,7 @@ class FilterPanel : public QWidget {
 
   private:
     QTreeWidget* tree_;
-    QLabel* fileLabel_;
+    QLabel* fileLabel_ = nullptr;
     QTimer changeTimer_;
 
     QAction* suspendAction_;
@@ -401,10 +404,10 @@ class FilterPanel : public QWidget {
     QAction* addFilterAction_;
     QAction* editAction_;
     QAction* deleteAction_;
-    QAction* moveUpAction_;
-    QAction* moveDownAction_;
+    QAction* moveUpAction_ = nullptr;
+    QAction* moveDownAction_ = nullptr;
     QAction* saveAction_;
-    QAction* sharedAction_;
+    QAction* sharedAction_ = nullptr;
     QList<QKeySequence> saveKeys_;
 
     // Per item filter properties (the tree structure and check states

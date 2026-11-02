@@ -177,8 +177,9 @@ class MainWindow : public QMainWindow {
     void importSettings();
     void exportSettings();
     void about();
+    // The changes of the flogg releases (CHANGELOG.md)
+    void whatsNew();
     void aboutQt();
-    void documentation();
     void showScratchPad();
     void sendToScratchpad( QString );
     void addToFilters( QString );
@@ -339,7 +340,8 @@ class MainWindow : public QMainWindow {
     QAction* importSettingsAction;
     QAction* exportSettingsAction;
     QAction* showScratchPadAction;
-    QAction* showDocumentationAction;
+    QAction* checkForUpdatesAction;
+    QAction* whatsNewAction;
     QAction* aboutAction;
     QAction* aboutQtAction;
     QAction* generateDumpAction;

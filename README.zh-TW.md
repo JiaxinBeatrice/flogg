@@ -51,6 +51,12 @@ Windows（x64）與 macOS（Apple Silicon）的安裝檔請到 [Releases 頁面]
 - `Window > Rename window...` 可為視窗命名，標題會顯示這個名稱而不是檔名；`Window` 選單會列出所有視窗及其 id（`#2`）。
 - 同一個檔案可以在多個視窗中開啟，每個分頁各有自己的 filter。
 
+### 更新
+
+- 每天啟動時檢查一次（`File > Preferences > File` 的 `Check for a new version at start`），或用 `Help > Check for updates...` 隨時檢查。GitHub 上有新版時，會顯示更新內容，可選擇立即更新、略過此版本或稍後再說。
+- `Help > What's new in flogg...` 列出 flogg 每個版本的改動（[CHANGELOG.md](CHANGELOG.md)）。
+- 更新會下載該版的安裝包，flogg 關閉時替換自己並重新啟動，設定會保留。flogg 無法寫入自己所在的資料夾時，改為顯示下載好的安裝包。
+
 ### 命令列
 
 - Windows 版的設定（`flogg.conf`）與預設 filter 檔放在 `flogg.exe` 旁邊，整個資料夾為 portable。
@@ -78,7 +84,7 @@ Windows（x64）與 macOS（Apple Silicon）的安裝檔請到 [Releases 頁面]
 
 ### 相較 klogg 移除的功能
 
-Predefined filters、highlighter sets、常駐搜尋結果高亮(highlight match)、清空檔案(clear file)、版本檢查與 Help 選單連結，已由 filter panel 取代或移除。
+Predefined filters、highlighter sets、常駐搜尋結果高亮(highlight match)、清空檔案(clear file)、內建說明文件與 Help 選單連結，已由 filter panel 取代或移除。
 
 ## 快捷鍵
 

@@ -59,6 +59,7 @@
 
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFileDialog>
@@ -69,6 +70,8 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QProgressDialog>
+#include <QTextBrowser>
+#include <QVBoxLayout>
 #include <QResource>
 #include <QSettings>
 #include <QScreen>
@@ -76,7 +79,6 @@
 #include <QSortFilterProxyModel>
 #include <QStringListModel>
 #include <QTemporaryFile>
-#include <QTextBrowser>
 #include <QToolBar>
 #include <QToolTip>
 #include <QUrl>
@@ -90,6 +92,7 @@
 #include "decompressor.h"
 #include "dispatch_to.h"
 #include "downloader.h"
+#include "updatechecker.h"
 #include "encodings.h"
 #include "favoritefiles.h"
 #include "highlighterset.h"
@@ -383,8 +386,8 @@ void MainWindow::reTranslateUI()
     optionsAction->setStatusTip( transAction( action::optionsStatusTip ) );
 
 
-    showDocumentationAction->setText( transAction( action::showDocumentationText ) );
-    showDocumentationAction->setStatusTip( transAction( action::showDocumentationStatusTip ) );
+    whatsNewAction->setText( tr( "What's new in flogg..." ) );
+    checkForUpdatesAction->setText( tr( "Check for updates..." ) );
 
     aboutAction->setText( transAction( action::aboutText ) );
     aboutAction->setStatusTip( transAction( action::aboutStatusTip ) );
@@ -599,10 +602,14 @@ void MainWindow::createActions()
     exportSettingsAction->setStatusTip( tr( "Save the settings to a flogg.conf file" ) );
     connect( exportSettingsAction, &QAction::triggered, this, &MainWindow::exportSettings );
 
-    showDocumentationAction = new QAction( tr( action::showDocumentationText ), this );
-    showDocumentationAction->setStatusTip( tr( action::showDocumentationStatusTip ) );
-    connect( showDocumentationAction, &QAction::triggered, this,
-             [ this ]( auto ) { this->documentation(); } );
+    whatsNewAction = new QAction( tr( "What's new in flogg..." ), this );
+    connect( whatsNewAction, &QAction::triggered, this, [ this ]( auto ) { this->whatsNew(); } );
+
+    checkForUpdatesAction = new QAction( tr( "Check for updates..." ), this );
+    // The application menu of macOS keeps it next to About
+    checkForUpdatesAction->setMenuRole( QAction::ApplicationSpecificRole );
+    connect( checkForUpdatesAction, &QAction::triggered, this,
+             [ this ]( auto ) { UpdateChecker::instance().checkNow( this ); } );
 
     aboutAction = new QAction( tr( action::aboutText ), this );
     aboutAction->setStatusTip( tr( action::aboutStatusTip ) );
@@ -760,6 +767,10 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     fileMenu->addAction( exitAction );
 
+    windowMenu = menuBar()->addMenu( tr( "&Window" ) );
+    connect( windowMenu, &QMenu::aboutToShow, this, &MainWindow::updateWindowMenu );
+    updateWindowMenu();
+
     editMenu = menuBar()->addMenu( tr( menu::editTitle ) );
     editMenu->addAction( copyAction );
     editMenu->addAction( selectAllAction );
@@ -799,12 +810,9 @@ void MainWindow::createMenus()
     favoritesMenu = menuBar()->addMenu( tr( menu::favoritesTitle ) );
     favoritesMenu->setToolTipsVisible( true );
 
-    windowMenu = menuBar()->addMenu( tr( "&Window" ) );
-    connect( windowMenu, &QMenu::aboutToShow, this, &MainWindow::updateWindowMenu );
-    updateWindowMenu();
-
     helpMenu = menuBar()->addMenu( tr( menu::helpTitle ) );
-    helpMenu->addAction( showDocumentationAction );
+    helpMenu->addAction( whatsNewAction );
+    helpMenu->addAction( checkForUpdatesAction );
     helpMenu->addSeparator();
     helpMenu->addAction( generateDumpAction );
     helpMenu->addSeparator();
@@ -1278,7 +1286,7 @@ void MainWindow::about()
             "<p>Copyright &copy; 2020 Nicolas Bonnefon, Anton Filimonov and other contributors</p>"
             "<p>You may modify and redistribute the program under the terms of the GPL (version 3 "
             "or later).</p>" )
-            .arg( kloggVersion(), kloggBuildDate(), kloggCommit() ) );
+            .arg( kloggReleaseVersion(), kloggBuildDate(), kloggCommit() ) );
 }
 
 void MainWindow::aboutQt()
@@ -1286,23 +1294,26 @@ void MainWindow::aboutQt()
     QMessageBox::aboutQt( this, tr( "About Qt" ) );
 }
 
-void MainWindow::documentation()
+void MainWindow::whatsNew()
 {
-    QFile doc( ":/documentation.html" );
-    if ( doc.open( QIODevice::ReadOnly | QIODevice::Text ) ) {
-        const auto text = QString::fromUtf8( doc.readAll() );
-        QTextBrowser* tb = new QTextBrowser();
-        tb->setOpenExternalLinks( true );
-        tb->setHtml( text );
-        tb->setWindowFlags( Qt::Window );
-        tb->setAttribute( Qt::WA_DeleteOnClose );
-        tb->setWindowTitle( tr( "flogg documentation" ) );
-        tb->resize( this->width() / 2, this->height() );
-        tb->show();
+    QFile changes( ":/CHANGELOG.md" );
+    if ( !changes.open( QIODevice::ReadOnly | QIODevice::Text ) ) {
+        LOG_ERROR << "Can't open the changelog resource";
+        return;
     }
-    else {
-        LOG_ERROR << "Can't open documentation resource";
-    }
+
+    QDialog dialog( this );
+    dialog.setWindowTitle( tr( "What's new in flogg" ) );
+    dialog.resize( 640, 560 );
+    auto* layout = new QVBoxLayout( &dialog );
+    auto* text = new QTextBrowser;
+    text->setOpenExternalLinks( true );
+    text->setMarkdown( QString::fromUtf8( changes.readAll() ) );
+    layout->addWidget( text );
+    auto* buttons = new QDialogButtonBox( QDialogButtonBox::Close );
+    connect( buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject );
+    layout->addWidget( buttons );
+    dialog.exec();
 }
 
 void MainWindow::showScratchPad()
@@ -1651,12 +1662,18 @@ void MainWindow::changeEvent( QEvent* event )
             }
         }
     }
+    else if ( event->type() == QEvent::PaletteChange ) {
+        mainTabWidget_.followParentPalette();
+    }
     else if ( event->type() == QEvent::StyleChange ) {
-        dispatchToMainThread( [ this ] {
-            loadIcons();
-            updateOpenedFilesMenu();
-            updateFavoritesMenu();
-        } );
+        // Dropped when the window is closed first
+        dispatchToObject(
+            [ this ] {
+                loadIcons();
+                updateOpenedFilesMenu();
+                updateFavoritesMenu();
+            },
+            this );
     }
     else if ( event->type() == QEvent::LanguageChange ) {
         reTranslateUI();
@@ -2049,7 +2066,7 @@ void MainWindow::updateTitleBar( const QString& file_name )
     }
 
     setWindowTitle( tr( "%1 - %2%3" ).arg( shownName, tr( "flogg" ), indexPart ) + tr( " (build " )
-                    + kloggVersion() + ")" );
+                    + kloggReleaseVersion() + ")" );
 }
 
 void MainWindow::refreshTitleBar()
@@ -2433,8 +2450,6 @@ void MainWindow::setupFilterPanel()
         restoreState( windowState.toByteArray() );
     }
 
-    viewMenu->addSeparator();
-    viewMenu->addAction( filterDock_->toggleViewAction() );
     toolsMenu->addSeparator();
     toolsMenu->addAction( filterDock_->toggleViewAction() );
     updateShortcuts();

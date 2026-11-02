@@ -17,7 +17,7 @@
    </sizepolicy>
   </property>
   <property name="windowTitle">
-   <string>Klogg preferences</string>
+   <string>flogg preferences</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_2">
    <item>
@@ -583,6 +583,25 @@
            <widget class="QCheckBox" name="verifySslCheckBox">
             <property name="text">
              <string>Verify certificates for https connections</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="updatesGroupBox">
+         <property name="title">
+          <string>Updates</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_updates">
+          <item>
+           <widget class="QCheckBox" name="checkForUpdatesCheckBox">
+            <property name="text">
+             <string>Check for a new version at start (once a day)</string>
             </property>
             <property name="checked">
              <bool>true</bool>

@@ -49,6 +49,7 @@
 #endif // _WIN32
 
 #include <cstdio>
+#include <cstdlib>
 
 #include <mimalloc.h>
 #include <QStyleHints>
@@ -66,6 +67,7 @@
 #include "mainwindow.h"
 #include "persistentinfo.h"
 #include "styles.h"
+#include "updatechecker.h"
 
 #include "cli.h"
 #include "kloggapp.h"
@@ -121,33 +123,105 @@ void setApplicationAttributes( bool enableQtHdpi, int scaleFactorRounding )
     QCoreApplication::setAttribute( Qt::AA_DontShowIconsInMenus );
 }
 
+#ifdef Q_OS_WIN
+namespace {
+
+// The console of the shell flogg is started from, when its output is not redirected
+struct ParentConsole {
+    HANDLE output = INVALID_HANDLE_VALUE;
+    bool written = false;
+};
+
+// The shell does not wait for a GUI application: its prompt is already shown when flogg
+// writes, an Enter typed for the user shows it again below the output
+void releaseParentConsole();
+
+ParentConsole& parentConsole()
+{
+    static ParentConsole console = [] {
+        ParentConsole attached;
+        const auto handle = ::GetStdHandle( STD_OUTPUT_HANDLE );
+        if ( ( handle == nullptr || handle == INVALID_HANDLE_VALUE )
+             && ::AttachConsole( ATTACH_PARENT_PROCESS ) ) {
+            attached.output
+                = ::CreateFileW( L"CONOUT$", GENERIC_READ | GENERIC_WRITE,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
+                                 nullptr );
+            if ( attached.output != INVALID_HANDLE_VALUE ) {
+                std::atexit( releaseParentConsole );
+            }
+        }
+        return attached;
+    }();
+    return console;
+}
+
+void writeToParentConsole( HANDLE output, const QString& text )
+{
+    // UTF-16, whatever the code page of the console
+    DWORD written = 0;
+    ::WriteConsoleW( output, text.utf16(), static_cast<DWORD>( text.size() ), &written,
+                     nullptr );
+}
+
+void releaseParentConsole()
+{
+    auto& console = parentConsole();
+    if ( console.written ) {
+        const auto input
+            = ::CreateFileW( L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
+                             nullptr );
+        if ( input != INVALID_HANDLE_VALUE ) {
+            INPUT_RECORD keys[ 2 ] = {};
+            for ( int i = 0; i < 2; ++i ) {
+                keys[ i ].EventType = KEY_EVENT;
+                keys[ i ].Event.KeyEvent.bKeyDown = i == 0;
+                keys[ i ].Event.KeyEvent.wRepeatCount = 1;
+                keys[ i ].Event.KeyEvent.wVirtualKeyCode = VK_RETURN;
+                keys[ i ].Event.KeyEvent.wVirtualScanCode
+                    = static_cast<WORD>( ::MapVirtualKeyW( VK_RETURN, MAPVK_VK_TO_VSC ) );
+                keys[ i ].Event.KeyEvent.uChar.UnicodeChar = L'\r';
+            }
+            DWORD written = 0;
+            ::WriteConsoleInputW( input, keys, 2, &written );
+            ::CloseHandle( input );
+        }
+    }
+    ::CloseHandle( console.output );
+    console.output = INVALID_HANDLE_VALUE;
+    ::FreeConsole();
+}
+
+} // namespace
+#endif
+
 // flogg is a GUI application, on Windows it writes to the console it is started from unless
-// its output is redirected
+// its output is redirected (then in UTF-8)
 void printToConsole( const QString& text, bool isError )
 {
     if ( text.isEmpty() ) {
         return;
     }
 
-#ifdef Q_OS_WIN
-    static const auto consoleReady = [] {
-        const auto handle = ::GetStdHandle( STD_OUTPUT_HANDLE );
-        if ( ( handle == nullptr || handle == INVALID_HANDLE_VALUE )
-             && ::AttachConsole( ATTACH_PARENT_PROCESS ) ) {
-            FILE* stream = nullptr;
-            freopen_s( &stream, "CONOUT$", "w", stdout );
-            freopen_s( &stream, "CONOUT$", "w", stderr );
-        }
-        return true;
-    }();
-    Q_UNUSED( consoleReady );
-#endif
+    const auto line = text.endsWith( '\n' ) ? text : text + '\n';
 
-    auto* stream = isError ? stderr : stdout;
-    std::fputs( text.toLocal8Bit().constData(), stream );
-    if ( !text.endsWith( '\n' ) ) {
-        std::fputs( "\n", stream );
+#ifdef Q_OS_WIN
+    auto& console = parentConsole();
+    if ( console.output != INVALID_HANDLE_VALUE ) {
+        // Below the prompt the shell has already shown
+        writeToParentConsole( console.output,
+                              ( console.written ? QString{} : QStringLiteral( "\r\n" ) )
+                                  + QString( line ).replace( '\n', QStringLiteral( "\r\n" ) ) );
+        console.written = true;
+        return;
     }
+    auto* stream = isError ? stderr : stdout;
+    std::fputs( line.toUtf8().constData(), stream );
+#else
+    auto* stream = isError ? stderr : stdout;
+    std::fputs( line.toLocal8Bit().constData(), stream );
+#endif
     std::fflush( stream );
 }
 
@@ -201,6 +275,10 @@ int main( int argc, char* argv[] )
         printToConsole( "flogg: " + parameters.error, true );
         return EXIT_FAILURE;
     }
+    if ( !parameters.output.isEmpty() ) {
+        printToConsole( parameters.output, false );
+        return EXIT_SUCCESS;
+    }
 
     const auto logLevel
         = static_cast<logging::LogLevel>( std::max( parameters.log_level, config.loggingLevel() ) );
@@ -212,7 +290,7 @@ int main( int argc, char* argv[] )
     auto maxConcurrency
         = tbb::global_control::active_value( tbb::global_control::max_allowed_parallelism );
 
-    LOG_INFO << "Klogg instance"
+    LOG_INFO << "flogg instance"
              << ", mimalloc v" << mi_version()
              << ", default concurrency " << maxConcurrency;
 
@@ -306,6 +384,8 @@ int main( int argc, char* argv[] )
 
     if ( app.isPrimary() ) {
         app.startControlServer();
+        // Once for all the windows of the settings file
+        UpdateChecker::instance().scheduleStartupCheck();
     }
 
     return app.exec();

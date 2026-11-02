@@ -118,7 +118,15 @@ class OptionsDialog : public QDialog, public Ui::OptionsDialog {
 
     void updateDialogFromConfig();
 
+    // Background and text of the selections, next to the style
+    void setupSelectionColors();
+    void updateSelectionButtons();
+
     QColor qfSearchColor_;
+    QColor selectionBackColor_;
+    QColor selectionTextColor_;
+    QPushButton* selectionBackButton_ = nullptr;
+    QPushButton* selectionTextButton_ = nullptr;
     QList<QuickHighlighter> colorLabels_;
 };
 

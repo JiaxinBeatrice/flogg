@@ -60,6 +60,7 @@
 #include "log.h"
 #include "persistentinfo.h"
 #include "shortcuts.h"
+#include "styles.h"
 
 #include "filterpanel.h"
 
@@ -336,21 +337,6 @@ class FlowLayout : public QLayout {
     std::vector<QLayoutItem*> items_;
 };
 
-// The native Windows styles draw a light selection that keeps the filter colours, the others
-// cover a selected row with the opaque highlight colour and the highlighted text colour
-bool hasTranslucentSelection( const QStyle* style )
-{
-    const auto name = style->name();
-    return name != QLatin1String( "windowsvista" ) && name != QLatin1String( "windows11" );
-}
-
-QColor selectionOverlay( const QPalette& palette )
-{
-    auto color = palette.color( QPalette::Active, QPalette::Highlight );
-    color.setAlpha( 90 );
-    return color;
-}
-
 // Filters have no expand arrow: their check box takes the place of the arrow, so that it
 // lines up with the arrows of the groups next to them instead of with their folder icons
 class FilterItemDelegate : public QStyledItemDelegate {
@@ -372,15 +358,19 @@ class FilterItemDelegate : public QStyledItemDelegate {
         // Rows are selected as a whole, the current column is not marked
         itemOption.state &= ~QStyle::State_HasFocus;
 
-        // A selected item keeps its background and text colours under a see through highlight
-        if ( hasTranslucentSelection( style )
-             && itemOption.state.testFlag( QStyle::State_Selected ) ) {
+        // A selected row has the fixed colours of the selected lines of the log views, in
+        // place of the filter colours
+        const bool selected = itemOption.state.testFlag( QStyle::State_Selected );
+        if ( selected ) {
             itemOption.state &= ~QStyle::State_Selected;
-            if ( itemOption.backgroundBrush.style() != Qt::NoBrush ) {
-                painter->fillRect( itemOption.rect, itemOption.backgroundBrush );
-                itemOption.backgroundBrush = QBrush{};
+            itemOption.backgroundBrush = QBrush{};
+            painter->fillRect( itemOption.rect, StyleManager::selectionBackColor() );
+            for ( const auto role : { QPalette::Text, QPalette::HighlightedText } ) {
+                itemOption.palette.setColor( QPalette::Active, role,
+                                             StyleManager::selectionTextColor() );
+                itemOption.palette.setColor( QPalette::Inactive, role,
+                                             StyleManager::selectionTextColor() );
             }
-            painter->fillRect( itemOption.rect, selectionOverlay( tree_->palette() ) );
         }
 
         if ( !itemOption.features.testFlag( QStyleOptionViewItem::HasCheckIndicator ) ) {
@@ -399,7 +389,7 @@ class FilterItemDelegate : public QStyledItemDelegate {
         boxOption.palette = tree_->palette();
         style->drawControl( QStyle::CE_ItemViewItem, &boxOption, painter, widget );
 
-        if ( index.data( Qt::ForegroundRole ).isValid() ) {
+        if ( !selected && index.data( Qt::ForegroundRole ).isValid() ) {
             itemOption.palette.setBrush( QPalette::HighlightedText,
                                          itemOption.palette.brush( QPalette::Text ) );
         }
@@ -439,38 +429,22 @@ class FilterTreeWidget : public QTreeWidget {
     using QTreeWidget::QTreeWidget;
 
   protected:
-    // The style does not fill selected rows, the delegate and the branches lay a see through
-    // highlight over them and the row gets a frame
+    // The style does not fill selected rows: the delegate and the branches use the fixed
+    // selection colour of the log views
     void initViewItemOption( QStyleOptionViewItem* option ) const override
     {
         QTreeWidget::initViewItemOption( option );
-        if ( hasTranslucentSelection( style() ) ) {
-            option->palette.setColor( QPalette::Highlight, Qt::transparent );
-        }
+        option->palette.setColor( QPalette::Highlight, Qt::transparent );
     }
 
     void drawBranches( QPainter* painter, const QRect& rect,
                        const QModelIndex& index ) const override
     {
+        // Under the expand arrow
+        if ( selectionModel()->isSelected( index ) ) {
+            painter->fillRect( rect, StyleManager::selectionBackColor() );
+        }
         QTreeWidget::drawBranches( painter, rect, index );
-        if ( hasTranslucentSelection( style() ) && selectionModel()->isSelected( index ) ) {
-            painter->fillRect( rect, selectionOverlay( palette() ) );
-        }
-    }
-
-    void drawRow( QPainter* painter, const QStyleOptionViewItem& option,
-                  const QModelIndex& index ) const override
-    {
-        QTreeWidget::drawRow( painter, option, index );
-        if ( hasTranslucentSelection( style() ) && selectionModel()->isSelected( index ) ) {
-            const QRect row( -header()->offset(), option.rect.top(), header()->length(),
-                             option.rect.height() );
-            painter->save();
-            painter->setPen( palette().color( QPalette::Active, QPalette::Highlight ) );
-            painter->setBrush( Qt::NoBrush );
-            painter->drawRect( row.adjusted( 0, 0, -1, -1 ) );
-            painter->restore();
-        }
     }
 
     // All drops are handled inside the tree (QTreeWidget moves the items itself and so does
@@ -1065,13 +1039,13 @@ void FilterPanel::setupUi()
     addButton( fileAction )->setPopupMode( QToolButton::MenuButtonPopup );
 
     // Moving across the edge of a group moves in or out of it
-    moveUpAction_ = new QAction( arrowIcon( true, palette() ), tr( "Move up" ), this );
+    moveUpAction_ = new QAction( tr( "Move up" ), this );
     moveUpAction_->setShortcutContext( Qt::WidgetShortcut );
     connect( moveUpAction_, &QAction::triggered, this, [ this ] { moveCurrent( true ); } );
     addArrowButton( moveUpAction_ );
     tree_->addAction( moveUpAction_ );
 
-    moveDownAction_ = new QAction( arrowIcon( false, palette() ), tr( "Move down" ), this );
+    moveDownAction_ = new QAction( tr( "Move down" ), this );
     moveDownAction_->setShortcutContext( Qt::WidgetShortcut );
     connect( moveDownAction_, &QAction::triggered, this, [ this ] { moveCurrent( false ); } );
     addArrowButton( moveDownAction_ );
@@ -1086,8 +1060,7 @@ void FilterPanel::setupUi()
         setSharedMode( checked );
         updateSharedAction();
     } );
-    sharedAction_->setIcon(
-        sharedFiltersIcon( palette().color( QPalette::Active, QPalette::Highlight ) ) );
+    loadIcons();
     auto* sharedButton = addButton( sharedAction_ );
     sharedButton->setToolButtonStyle( Qt::ToolButtonTextBesideIcon );
     // As tall as the other text buttons
@@ -1926,6 +1899,26 @@ void FilterPanel::restoreHeaderState()
         header->setSectionHidden( NumberColumn, false );
         header->resizeSection( NumberColumn, 32 );
     }
+}
+
+void FilterPanel::loadIcons()
+{
+    moveUpAction_->setIcon( arrowIcon( true, palette() ) );
+    moveDownAction_->setIcon( arrowIcon( false, palette() ) );
+    sharedAction_->setIcon(
+        sharedFiltersIcon( palette().color( QPalette::Active, QPalette::Highlight ) ) );
+}
+
+void FilterPanel::changeEvent( QEvent* event )
+{
+    // fileLabel_ is the last widget made by setupUi
+    if ( event->type() == QEvent::PaletteChange && fileLabel_ ) {
+        loadIcons();
+        // Suspended filters are drawn with the disabled text colour
+        updateLook();
+    }
+
+    QWidget::changeEvent( event );
 }
 
 bool FilterPanel::eventFilter( QObject* watched, QEvent* event )

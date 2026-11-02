@@ -7,7 +7,7 @@ project(
   LANGUAGES C CXX ASM
 )
 
-set(PROJECT_HOMEPAGE_URL "https://github.com/variar/klogg")
+set(PROJECT_HOMEPAGE_URL "https://github.com/howardgood88/flogg")
 
 string(TIMESTAMP PRODUCT_CURRENT_YEAR "%Y")
 set(COMPANY "Anton Filimonov")
@@ -54,9 +54,6 @@ set(COPYING_FILE ${CMAKE_CURRENT_SOURCE_DIR}/COPYING)
 
 set(README_FILE ${CMAKE_CURRENT_SOURCE_DIR}/README.md)
 
-set(DOCUMENTATION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/DOCUMENTATION.md)
-set(DOCUMENTATION_HTML ${CMAKE_BINARY_DIR}/generated/documentation.html)
-set(DOCUMENTATION_RESOURCE ${CMAKE_BINARY_DIR}/generated/documentation.qrc)
 
 if(WIN32)
   set(ICON_NAME klogg.ico)
@@ -279,8 +276,6 @@ if(UNIX)
       FILES ${COPYING_FILE}
             ${NOTICE_FILE}
             ${README_FILE}
-            ${DOCUMENTATION_HTML}
-            ${DOCUMENTATION_FILE}
       DESTINATION ${CMAKE_INSTALL_DOCDIR}
     )
 
@@ -291,7 +286,7 @@ if(UNIX)
     #deb
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
     set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
-    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "http://github.com/variar/klogg")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/howardgood88/flogg")
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Anton Filimonov <${CPACK_PACKAGE_CONTACT}>")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS YES)
 
@@ -300,7 +295,7 @@ if(UNIX)
     set(CPACK_RPM_PACKAGE_LICENSE "GPLv3")
     set(CPACK_RPM_PACKAGE_AUTOREQ YES)
     #set(CPACK_RPM_PACKAGE_REQUIRES "qt5-qtbase >= ${KLOGG_QT_VERSION}")
-    set(CPACK_RPM_PACKAGE_URL "http://github.com/variar/klogg")
+    set(CPACK_RPM_PACKAGE_URL "https://github.com/howardgood88/flogg")
     set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
         /usr/share/applications
         /usr/share/icons
@@ -329,7 +324,6 @@ add_custom_target(
   SOURCES ${README_FILE}
           ${COPYING_FILE}
           ${NOTICE_FILE}
-          ${DOCUMENTATION_FILE}
 )
 
 add_custom_target(klogg_stuff SOURCES .clang-format .clang-tidy .cmake-format)

@@ -35,6 +35,13 @@ QString Downloader::lastError() const
     return lastError_;
 }
 
+void Downloader::abort()
+{
+    if ( currentDownload_ ) {
+        currentDownload_->abort();
+    }
+}
+
 void Downloader::download( const QUrl& url, QFile* outputFile )
 {
     output_ = outputFile;

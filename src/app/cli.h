@@ -68,6 +68,8 @@ struct CliParameters {
 
     // Set when the command line is invalid
     QString error;
+    // Help or version: printed instead of starting
+    QString output;
 
     static constexpr auto ConfigOptionName = "config";
 
@@ -96,8 +98,8 @@ struct CliParameters {
         QCommandLineParser parser;
         parser.setApplicationDescription( "flogg log viewer" );
         const auto helpOption = parser.addHelpOption();
-        // Shown without the build number, in a message box on Windows
-        QCoreApplication::setApplicationVersion( releaseVersion() );
+        // Shown without the build number
+        QCoreApplication::setApplicationVersion( kloggReleaseVersion() );
         const auto versionOption = parser.addVersionOption();
 
         const QCommandLineOption multiInstanceOption(
@@ -212,14 +214,34 @@ struct CliParameters {
             parser.addOption( patternOption );
         }
 
-        parser.process( app );
+        if ( console ) {
+            parser.process( app );
 
-        if ( parser.isSet( helpOption ) ) {
-            parser.showHelp( EXIT_SUCCESS );
+            if ( parser.isSet( helpOption ) ) {
+                parser.showHelp( EXIT_SUCCESS );
+            }
+
+            if ( parser.isSet( versionOption ) ) {
+                parser.showVersion();
+            }
         }
+        else {
+            // Qt shows these in a message box for a GUI application on Windows, flogg prints
+            // them in the terminal like its other output
+            if ( !parser.parse( app.arguments() ) ) {
+                error = parser.errorText();
+                return;
+            }
 
-        if ( parser.isSet( versionOption ) ) {
-            parser.showVersion();
+            if ( parser.isSet( helpOption ) || parser.isSet( "help-all" ) ) {
+                output = parser.helpText();
+                return;
+            }
+
+            if ( parser.isSet( versionOption ) ) {
+                output = QString( "flogg %1" ).arg( QCoreApplication::applicationVersion() );
+                return;
+            }
         }
 
         if (parser.value( debugOption ).toInt() > 0) {
@@ -318,13 +340,6 @@ struct CliParameters {
         request[ "width" ] = window_width;
         request[ "height" ] = window_height;
         return request;
-    }
-
-    // Release version without the build number: 1.0.0 for 1.0.0.3
-    static QString releaseVersion()
-    {
-        const auto parts = QString( kloggVersion() ).split( '.' );
-        return parts.mid( 0, 3 ).join( '.' );
     }
 };
 

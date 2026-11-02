@@ -21,8 +21,11 @@
 #define KLOGG_KLOGG_VERSION_H
 
 #include <QLatin1String>
+#include <QString>
 
 QLatin1String kloggVersion();
+// The version shown to the users, like the release tags: 1.0.0 for the build 1.0.0.3
+QString kloggReleaseVersion();
 QLatin1String kloggBuildDate();
 QLatin1String kloggCommit();
 QLatin1String kloggGitVersion();

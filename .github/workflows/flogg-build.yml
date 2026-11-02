@@ -254,6 +254,42 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Shown by the update dialog of flogg: the section of the version in CHANGELOG.md
+      # ("## 1.2.0 (date)"), else the message of the annotated tag, else the commits since
+      # the previous release
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          version="${GITHUB_REF_NAME#v}"
+          message=$(awk -v version="$version" '
+            /^## / { if (found) exit; found = ($2 == version) ; next }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "${message//[[:space:]]/}" ] \
+             && [ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag" ]; then
+            message=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
+          fi
+          if [ -n "${message//[[:space:]]/}" ]; then
+            printf '%s\n' "$message" > notes.md
+          else
+            previous=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
+            range="${GITHUB_REF_NAME}"
+            if [ -n "$previous" ] && [ "$previous" != "${GITHUB_REF_NAME}" ]; then
+              range="${previous}..${GITHUB_REF_NAME}"
+            fi
+            {
+              echo "## Changes"
+              git log --no-merges --format='- %s' "$range" | sed 's/^- flogg: /- /' | head -50
+            } > notes.md
+          fi
+          cat notes.md
+
       - uses: actions/download-artifact@v4
         with:
           path: packages
@@ -261,6 +297,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          body_path: notes.md
           files: |
             packages/flogg-*-windows-x64.zip
             packages/flogg-*-macos-arm64.dmg

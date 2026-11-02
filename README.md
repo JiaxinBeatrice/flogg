@@ -51,6 +51,12 @@ Downloads for Windows (x64) and macOS (Apple Silicon) are on the [releases page]
 - `Window > Rename window...` gives a window a name, shown in its title instead of the file name; the `Window` menu lists every window with its id (`#2`).
 - The same file can be open in several windows, each tab with its own filters.
 
+### Updates
+
+- Once a day at start (`Check for a new version at start` in `File > Preferences > File`), or with `Help > Check for updates...`, flogg looks for a newer release on GitHub and shows what changed: update now, skip this version or later.
+- `Help > What's new in flogg...` lists the changes of every flogg release ([CHANGELOG.md](CHANGELOG.md)).
+- Updating downloads the package of the release; flogg replaces itself when it is closed and starts again, the settings are kept. When it can't write to its own folder, the downloaded package is shown instead.
+
 ### Command line
 
 - On Windows the settings (`flogg.conf`) and the default filter file are kept next to `flogg.exe`, so the whole folder is portable.
@@ -78,7 +84,7 @@ For example `flogg -w wifi --add-regex "wlan\d" --line 1200 kernel.log` opens `k
 
 ### Removed from klogg
 
-Predefined filters, highlighter sets, persistent highlighting of search matches (Highlight match), Clear file, the version check and the Help menu links are replaced by the filter panel or dropped.
+Predefined filters, highlighter sets, persistent highlighting of search matches (Highlight match), Clear file, the built-in documentation and the Help menu links are replaced by the filter panel or dropped.
 
 ## Shortcuts
 

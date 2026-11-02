@@ -32,6 +32,9 @@ class Downloader : public QObject {
 
     QString lastError() const;
 
+    // Ends the download in progress, finished( false ) follows
+    void abort();
+
   Q_SIGNALS:
     void downloadProgress( qint64 bytesReceived, qint64 bytesTotal );
     void finished( bool );

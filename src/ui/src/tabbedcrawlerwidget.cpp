@@ -52,7 +52,26 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     , newdata_icon_( ":/images/newdata_icon.png" )
     , newfiltered_icon_( ":/images/newfiltered_icon.png" )
 {
+    updateTabBarStyle();
 
+    // Shown as soon as a file is open, even with a single tab
+    setTabBar( &myTabBar_ );
+    myTabBar_.hide();
+
+    myTabBar_.setContextMenuPolicy( Qt::CustomContextMenu );
+    connect( &myTabBar_, &CrawlerTabBar::showTabContextMenu, this,
+             &TabbedCrawlerWidget::showContextMenu );
+
+    // Queued: tabs stop using the shared filters while their window is destroyed
+    connect( &SharedFilters::instance(), &SharedFilters::usersChanged, this,
+             &TabbedCrawlerWidget::updateSharedMarks, Qt::QueuedConnection );
+
+    // Dropped when the widget is destroyed first
+    dispatchToObject( [ this ] { loadIcons(); }, this );
+}
+
+void TabbedCrawlerWidget::updateTabBarStyle()
+{
     // The styles draw the labels of the tabs a few pixels low: below 28 pixels the bottom of
     // the text is cut on macOS, their natural height (32) is taller than needed
     QString tabStyle = "QTabBar::tab { height: 28px; }";
@@ -101,21 +120,11 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
         tabCloseButtonStyle = tabCloseButtonStyle.arg( "" );
     }
 
-    myTabBar_.setStyleSheet( tabStyle.append( tabCloseButtonStyle ) );
-
-    setTabBar( &myTabBar_ );
-    myTabBar_.hide();
-
-    myTabBar_.setContextMenuPolicy( Qt::CustomContextMenu );
-    connect( &myTabBar_, &CrawlerTabBar::showTabContextMenu, this,
-             &TabbedCrawlerWidget::showContextMenu );
-
-    // Queued: tabs stop using the shared filters while their window is destroyed
-    connect( &SharedFilters::instance(), &SharedFilters::usersChanged, this,
-             &TabbedCrawlerWidget::updateSharedMarks, Qt::QueuedConnection );
-
-    // Dropped when the widget is destroyed first
-    dispatchToObject( [ this ] { loadIcons(); }, this );
+    // Applying the same sheet again would polish the tab bar for nothing
+    const auto styleSheet = tabStyle.append( tabCloseButtonStyle );
+    if ( myTabBar_.styleSheet() != styleSheet ) {
+        myTabBar_.setStyleSheet( styleSheet );
+    }
 }
 
 void TabbedCrawlerWidget::loadIcons()
@@ -170,12 +179,22 @@ void TabbedCrawlerWidget::updateSharedMarks()
     }
 }
 
+void TabbedCrawlerWidget::followParentPalette()
+{
+    // An empty palette takes the one of the parent and passes it to the tabs
+    setPalette( QPalette() );
+}
+
 void TabbedCrawlerWidget::changeEvent( QEvent* event )
 {
     if ( event->type() == QEvent::StyleChange ) {
-        dispatchToObject( [ this ] { loadIcons(); }, this );
+        dispatchToObject(
+            [ this ] {
+                updateTabBarStyle();
+                loadIcons();
+            },
+            this );
     }
-
     QWidget::changeEvent( event );
 }
 
@@ -196,16 +215,14 @@ void TabbedCrawlerWidget::addTabBarItem( int index, const QString& fileName )
     myTabBar_.setTabData( index, tabData );
 
     setCurrentIndex( index );
-
-    if ( count() > 1 )
-        myTabBar_.show();
+    myTabBar_.show();
 }
 
 void TabbedCrawlerWidget::removeCrawler( int index )
 {
     QTabWidget::removeTab( index );
 
-    if ( count() <= 1 )
+    if ( count() == 0 )
         myTabBar_.hide();
 }
 

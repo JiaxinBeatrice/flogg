@@ -144,6 +144,15 @@ void Configuration::retrieveFromStorage( QSettings& settings )
     qfIgnoreCase_
         = settings.value( "quickfind.ignore_case", DefaultConfiguration.qfIgnoreCase_ ).toBool();
 
+    const auto readColor = [ &settings ]( const char* key, const QColor& defaultColor ) {
+        const QColor color( settings.value( key, defaultColor.name() ).toString() );
+        return color.isValid() ? color : defaultColor;
+    };
+    selectionBackColor_
+        = readColor( "view.selectionBackColor", DefaultConfiguration.selectionBackColor_ );
+    selectionTextColor_
+        = readColor( "view.selectionTextColor", DefaultConfiguration.selectionTextColor_ );
+
     autoRunSearchOnPatternChange_ = settings
                                         .value( "regexpType.autoRunSearch",
                                                 DefaultConfiguration.autoRunSearchOnPatternChange_ )
@@ -234,6 +243,8 @@ void Configuration::retrieveFromStorage( QSettings& settings )
 
     verifySslPeers_
         = settings.value( "net.verifySslPeers", DefaultConfiguration.verifySslPeers_ ).toBool();
+    checkForUpdates_
+        = settings.value( "update.checkOnStart", DefaultConfiguration.checkForUpdates_ ).toBool();
 
     // View settings
     overviewVisible_
@@ -318,9 +329,18 @@ void Configuration::retrieveFromStorage( QSettings& settings )
     }
     settings.endArray();
 
+    // Every save writes the whole palette: the old default background is not a choice
+    static const std::map<QString, QString> previousDefaults = {
+        { "Base", "#282828" },
+    };
     settings.beginGroup( "dark" );
     for ( auto& color : darkPalette_ ) {
-        color.second = settings.value( color.first, color.second ).toString();
+        const auto value = settings.value( color.first, color.second ).toString();
+        const auto previous = previousDefaults.find( color.first );
+        if ( previous == previousDefaults.end()
+             || value.compare( previous->second, Qt::CaseInsensitive ) != 0 ) {
+            color.second = value;
+        }
     }
     settings.endGroup();
 }
@@ -343,6 +363,8 @@ void Configuration::saveToStorage( QSettings& settings ) const
 
     settings.setValue( "regexpType.quickfind", static_cast<int>( quickfindRegexpType_ ) );
     settings.setValue( "regexpType.quickfindBackColor", qfBackColor_.name( QColor::HexArgb ) );
+    settings.setValue( "view.selectionBackColor", selectionBackColor_.name() );
+    settings.setValue( "view.selectionTextColor", selectionTextColor_.name() );
 
     settings.setValue( "quickfind.incremental", quickfindIncremental_ );
     settings.setValue( "quickfind.ignore_case", qfIgnoreCase_ );
@@ -375,6 +397,7 @@ void Configuration::saveToStorage( QSettings& settings ) const
     settings.setValue( "perf.optimizeForNotLatinEncodings", optimizeForNotLatinEncodings_ );
 
     settings.setValue( "net.verifySslPeers", verifySslPeers_ );
+    settings.setValue( "update.checkOnStart", checkForUpdates_ );
 
     settings.setValue( "view.overviewVisible", overviewVisible_ );
     settings.setValue( "view.lineNumbersVisibleInMain", lineNumbersVisibleInMain_ );

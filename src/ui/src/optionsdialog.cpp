@@ -39,6 +39,7 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -92,6 +93,7 @@ OptionsDialog::OptionsDialog( QWidget* parent )
              [ this ]( auto ) { this->setupArchives(); } );
 
     connect( quickFindColorButton, &QPushButton::clicked, this, &OptionsDialog::changeQfColor );
+    setupSelectionColors();
 
     connect( restoreShortcutsDefaults, &QPushButton::clicked, this, [ this ]() {
         auto ret = QMessageBox::question(
@@ -333,6 +335,9 @@ void OptionsDialog::updateDialogFromConfig()
     quickFindSearchBox->setCurrentIndex( getRegexpTypeIndex( config.quickfindRegexpType() ) );
     qfSearchColor_ = config.qfBackColor();
     HighlighterEdit::updateIcon( quickFindColorButton, qfSearchColor_ );
+    selectionBackColor_ = config.selectionBackColor();
+    selectionTextColor_ = config.selectionTextColor();
+    updateSelectionButtons();
     regexpEngineComboBox->setCurrentIndex( getRegexpEngineIndex( config.regexpEngine() ) );
     autoRunSearchOnAddCheckBox->setChecked( config.autoRunSearchOnPatternChange() );
 
@@ -373,6 +378,7 @@ void OptionsDialog::updateDialogFromConfig()
 
     // downloads
     verifySslCheckBox->setChecked( config.verifySslPeers() );
+    checkForUpdatesCheckBox->setChecked( config.checkForUpdates() );
 
     const auto encodingIndex = encodingComboBox->findData( config.defaultEncodingMib() );
     encodingComboBox->setCurrentIndex( encodingIndex < 0 ? 0 : encodingIndex );
@@ -460,6 +466,45 @@ void OptionsDialog::setupColorLabels()
     auto* colorLabelsTab = new QWidget;
     colorLabelsTab->setLayout( layout );
     tabWidget->addTab( colorLabelsTab, tr( "Color labels" ) );
+}
+
+void OptionsDialog::setupSelectionColors()
+{
+    auto* row = new QHBoxLayout;
+    row->addWidget( new QLabel( tr( "Selection:" ) ) );
+    selectionBackButton_ = new QPushButton( tr( "Background" ) );
+    selectionTextButton_ = new QPushButton( tr( "Text" ) );
+    auto* defaultButton = new QPushButton( tr( "Default" ) );
+    defaultButton->setToolTip( tr( "White text on blue" ) );
+    row->addWidget( selectionBackButton_ );
+    row->addWidget( selectionTextButton_ );
+    row->addWidget( defaultButton );
+    row->addStretch();
+    verticalLayout_15->addLayout( row );
+
+    const auto pick = [ this ]( QColor& color ) {
+        QColor newColor;
+        if ( HighlighterEdit::showColorPicker( color, newColor ) ) {
+            color = newColor;
+            updateSelectionButtons();
+        }
+    };
+    connect( selectionBackButton_, &QPushButton::clicked, this,
+             [ this, pick ] { pick( selectionBackColor_ ); } );
+    connect( selectionTextButton_, &QPushButton::clicked, this,
+             [ this, pick ] { pick( selectionTextColor_ ); } );
+    connect( defaultButton, &QPushButton::clicked, this, [ this ] {
+        const Configuration defaults;
+        selectionBackColor_ = defaults.selectionBackColor();
+        selectionTextColor_ = defaults.selectionTextColor();
+        updateSelectionButtons();
+    } );
+}
+
+void OptionsDialog::updateSelectionButtons()
+{
+    HighlighterEdit::updateIcon( selectionBackButton_, selectionBackColor_ );
+    HighlighterEdit::updateIcon( selectionTextButton_, selectionTextColor_ );
 }
 
 void OptionsDialog::changeQfColor()
@@ -601,10 +646,19 @@ void OptionsDialog::updateConfigFromDialog()
     // version checking
 
     config.setVerifySslPeers( verifySslCheckBox->isChecked() );
+    config.setCheckForUpdates( checkForUpdatesCheckBox->isChecked() );
 
-    restartAppMessage = config.style() != styleComboBox->currentText();
-
+    // The style is applied at once, the windows follow its change events. The selection
+    // colours are part of its palettes.
+    const auto styleChanged = config.style() != styleComboBox->currentText()
+                              || config.selectionBackColor() != selectionBackColor_
+                              || config.selectionTextColor() != selectionTextColor_;
     config.setStyle( styleComboBox->currentText() );
+    config.setSelectionBackColor( selectionBackColor_ );
+    config.setSelectionTextColor( selectionTextColor_ );
+    if ( styleChanged ) {
+        StyleManager::applyStyle( config.style() );
+    }
     config.setHideAnsiColorSequences( hideAnsiColorsCheckBox->isChecked() );
 
     config.setDefaultEncodingMib( encodingComboBox->currentData().toInt() );

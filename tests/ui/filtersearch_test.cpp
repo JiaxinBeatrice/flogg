@@ -25,6 +25,7 @@
 #include <QAbstractButton>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QTabBar>
 #include <QMessageBox>
 #include <QSignalSpy>
@@ -51,6 +52,7 @@
 #include "crawlerwidget.h"
 #include "filterpanel.h"
 #include "mainwindow.h"
+#include "optionsdialog.h"
 #include "session.h"
 #include "tabbedcrawlerwidget.h"
 #include "filtertree.h"
@@ -587,6 +589,64 @@ SCENARIO( "filter search benchmark", "[.benchmark]" )
 
 // Hidden, saves pictures of the filter panel while dragging an item below the last row:
 // FLOGG_RENDER_DIR=<dir> klogg_itests "[.render]"
+// Hidden, saves the filter panel with selected rows in both styles:
+// FLOGG_RENDER_DIR=<dir> klogg_itests "[.render]"
+SCENARIO( "Filter panel selection rendering", "[.render]" )
+{
+    const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
+    if ( renderDir.isEmpty() ) {
+        WARN( "FLOGG_RENDER_DIR is not set" );
+        return;
+    }
+
+    QTemporaryDir dir;
+    auto root = FilterNode::makeGroup( "root" );
+    auto errors = FilterNode::makeFilter( "ERROR" );
+    errors.backColor = QColor( "#fff3a0" );
+    root.children.push_back( errors );
+    auto red = FilterNode::makeFilter( "crash" );
+    red.foreColor = QColor( "#c00000" );
+    root.children.push_back( red );
+    auto group = FilterNode::makeGroup( "WiFi" );
+    auto wlan = FilterNode::makeFilter( "wlan" );
+    wlan.backColor = QColor( "#2e7d32" );
+    wlan.foreColor = QColor( Qt::white );
+    group.children.push_back( wlan );
+    group.children.push_back( FilterNode::makeFilter( "connected" ) );
+    root.children.push_back( group );
+    const auto filtersFile = dir.filePath( "test.flogg-filters.json" );
+    REQUIRE( filters::saveToFile( root, filtersFile ) );
+
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    const auto previousFile = settings.value( "filterPanel/currentFile" );
+    settings.setValue( "filterPanel/currentFile", filtersFile );
+
+    const auto previousPalette = QApplication::palette();
+    const auto previousStyle = QApplication::style()->name();
+    {
+        FilterPanel panel;
+        panel.resize( 400, 260 );
+        panel.show();
+        auto* tree = panel.findChild<QTreeWidget*>();
+        REQUIRE( tree );
+        tree->expandAll();
+        tree->clearSelection();
+        tree->topLevelItem( 0 )->setSelected( true );
+        tree->topLevelItem( 2 )->child( 0 )->setSelected( true );
+
+        for ( const auto& style : { StyleManager::LightStyleKey, StyleManager::DarkStyleKey } ) {
+            StyleManager::applyStyle( style );
+            QTest::qWait( 100 );
+            REQUIRE( panel.grab().save(
+                QString( "%1/panel_selection_%2.png" ).arg( renderDir, style ) ) );
+        }
+    }
+
+    QApplication::setStyle( previousStyle );
+    QApplication::setPalette( previousPalette );
+    settings.setValue( "filterPanel/currentFile", previousFile );
+}
+
 SCENARIO( "Filter panel drop below the last row rendering", "[.render]" )
 {
     const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
@@ -944,7 +1004,7 @@ SCENARIO( "Filter panel check box lined up with the group arrows", "[filters]" )
     settings.setValue( "filterPanel/currentFile", previousFile );
 }
 
-SCENARIO( "Filter panel selected filter keeps its colours", "[filters]" )
+SCENARIO( "Filter panel selected filter has the selection colours", "[filters]" )
 {
     QTemporaryDir dir;
     auto root = FilterNode::makeGroup( "root" );
@@ -969,23 +1029,28 @@ SCENARIO( "Filter panel selected filter keeps its colours", "[filters]" )
     tree->setFocus();
     REQUIRE( filter->isSelected() );
 
-    // The text is drawn in the filter colour, not in the highlighted text colour
+    // Like the selected lines of the log views: white text on the selection colour, the
+    // filter colours are not shown
     const auto row = tree->viewport()->grab( tree->visualItemRect( filter ) ).toImage();
-    // and its background shows through the selection
-    int redPixels = 0;
-    int yellowPixels = 0;
+    int whitePixels = 0;
+    int selectionPixels = 0;
+    int filterPixels = 0;
     for ( int y = 0; y < row.height(); ++y ) {
         for ( int x = 0; x < row.width(); ++x ) {
             const auto color = row.pixelColor( x, y );
-            if ( color.red() > 180 && color.green() < 80 && color.blue() < 80 ) {
-                ++redPixels;
+            if ( color.red() > 240 && color.green() > 240 && color.blue() > 240 ) {
+                ++whitePixels;
             }
-            if ( color.red() > 150 && color.green() > 150 && color.blue() < 120 ) {
-                ++yellowPixels;
+            if ( color == StyleManager::selectionBackColor() ) {
+                ++selectionPixels;
+            }
+            if ( color.red() > 150 && color.blue() < 120 ) {
+                ++filterPixels;
             }
         }
     }
-    CHECK( redPixels > 20 );
+    CHECK( whitePixels > 20 );
+    CHECK( filterPixels == 0 );
 
     // The current cell looks like the rest of the selected row, also in the Light style
     // which fills it
@@ -1003,7 +1068,7 @@ SCENARIO( "Filter panel selected filter keeps its colours", "[filters]" )
         QApplication::setPalette( previousPalette );
         QApplication::processEvents();
     }
-    CHECK( yellowPixels > row.width() * row.height() / 4 );
+    CHECK( selectionPixels > row.width() * row.height() / 4 );
 
     // FLOGG_RENDER_DIR=<dir> also saves pictures of a selected filter, plain filter and group
     const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
@@ -2072,6 +2137,120 @@ SCENARIO( "Main window tab bar rendering", "[.render]" )
 
     QApplication::setStyle( previousStyle );
     QApplication::setPalette( previousPalette );
+}
+
+SCENARIO( "Main window shows the tab bar from the first file", "[ui]" )
+{
+    QTemporaryDir dir;
+    const auto log = dir.filePath( "single.log" );
+    {
+        QFile file( log );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        file.write( "line\n" );
+    }
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession windowSession{ appSession, "SingleTab", 0 };
+    MainWindow mainWindow( windowSession );
+    auto* tabArea = mainWindow.findChild<TabbedCrawlerWidget*>();
+    CHECK( tabArea->tabBar()->isHidden() );
+
+    mainWindow.loadInitialFile( log, false );
+    REQUIRE( waitUiState( [ & ] { return tabArea->count() == 1; } ) );
+    CHECK_FALSE( tabArea->tabBar()->isHidden() );
+}
+
+// Also saves the main window in each style with
+// FLOGG_RENDER_DIR=<dir> klogg_itests "Main window follows a style change"
+SCENARIO( "Main window follows a style change", "[ui]" )
+{
+    const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
+    const auto previousPalette = QApplication::palette();
+    const auto previousStyle = QApplication::style()->name();
+
+    QTemporaryDir dir;
+    const auto log = dir.filePath( "styles.log" );
+    {
+        QFile file( log );
+        REQUIRE( file.open( QIODevice::WriteOnly ) );
+        for ( int i = 0; i < 40; ++i ) {
+            file.write( QString( "2026-11-03 line %1 %2\n" )
+                            .arg( i )
+                            .arg( i % 3 ? "INFO" : "ERROR" )
+                            .toUtf8() );
+        }
+    }
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession windowSession{ appSession, "Styles", 0 };
+    MainWindow mainWindow( windowSession );
+    mainWindow.resize( 1000, 650 );
+    mainWindow.loadInitialFile( log, false );
+    auto* tabArea = mainWindow.findChild<TabbedCrawlerWidget*>();
+    REQUIRE( waitUiState( [ & ] { return tabArea->count() == 1; } ) );
+    QTest::qWait( 200 );
+
+    // Each style is applied on top of the previous one, like a change in the options
+    int step = 0;
+    for ( const auto& style :
+          { QString( StyleManager::LightStyleKey ), QString( StyleManager::DarkStyleKey ),
+            StyleManager::defaultPlatformStyle(), QString( StyleManager::DarkStyleKey ),
+            QString( StyleManager::FusionKey ), QString( StyleManager::LightStyleKey ) } ) {
+        StyleManager::applyStyle( style );
+        QTest::qWait( 200 );
+
+        // The tab widget is skipped by Qt because of the style sheet of its tab bar
+        const auto* view = mainWindow.findChild<AbstractLogView*>();
+        REQUIRE( view );
+        CHECK( view->viewport()->palette().color( QPalette::Base )
+               == QApplication::palette().color( QPalette::Base ) );
+
+        // Dark: the log views and the filter panel have the grey text of the terminal
+        const auto* tree = mainWindow.findChild<FilterPanel*>()->findChild<QTreeWidget*>();
+        const bool dark = style == QString( StyleManager::DarkStyleKey );
+        const QColor viewText = dark ? QColor( "#cccccc" ) : QApplication::palette().color( QPalette::Text );
+        INFO( style.toStdString() << " view "
+                                  << view->viewport()->palette().color( QPalette::Text ).name().toStdString()
+                                  << " tree " << tree->palette().color( QPalette::Text ).name().toStdString()
+                                  << " expected " << viewText.name().toStdString() );
+        CHECK( view->viewport()->palette().color( QPalette::Text ) == viewText );
+        CHECK( tree->palette().color( QPalette::Text ) == viewText );
+        if ( dark ) {
+            CHECK( QApplication::palette().color( QPalette::Text ) == QColor( "#ffffff" ) );
+            // Also where the platform theme has its own palette (macOS line edits)
+            for ( const auto* edit : mainWindow.findChildren<QLineEdit*>() ) {
+                CHECK( edit->palette().color( QPalette::Text ) == QColor( "#ffffff" ) );
+            }
+        }
+
+        ++step;
+        if ( !renderDir.isEmpty() ) {
+            REQUIRE( mainWindow.grab().save(
+                QString( "%1/style_%2_%3.png" ).arg( renderDir ).arg( step ).arg( style ) ) );
+        }
+    }
+
+    QApplication::setStyle( previousStyle );
+    QApplication::setPalette( previousPalette );
+}
+
+// Hidden, saves the View tab of the options: FLOGG_RENDER_DIR=<dir> klogg_itests "[.render]"
+SCENARIO( "Options view tab rendering", "[.render]" )
+{
+    const auto renderDir = qEnvironmentVariable( "FLOGG_RENDER_DIR" );
+    if ( renderDir.isEmpty() ) {
+        WARN( "FLOGG_RENDER_DIR is not set" );
+        return;
+    }
+
+    auto appSession = std::make_shared<Session>();
+    WindowSession windowSession{ appSession, "Options", 0 };
+    MainWindow mainWindow( windowSession );
+    OptionsDialog dialog( &mainWindow );
+    dialog.findChild<QTabWidget*>()->setCurrentIndex( 1 );
+    dialog.show();
+    QTest::qWait( 100 );
+    REQUIRE( dialog.grab().save( renderDir + "/options_view.png" ) );
 }
 
 SCENARIO( "Shared filters across windows ask only for the last tab", "[filters]" )

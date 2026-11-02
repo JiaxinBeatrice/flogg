@@ -170,8 +170,8 @@
     <name>CrawlerWidget</name>
     <message>
         <location filename="../../ui/src/crawlerwidget.cpp" line="425"/>
-        <source>klogg</source>
-        <translation>klogg</translation>
+        <source>flogg</source>
+        <translation>flogg</translation>
     </message>
     <message>
         <location filename="../../ui/src/crawlerwidget.cpp" line="426"/>
@@ -473,18 +473,18 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="2117"/>
-        <source>klogg -- switch to file</source>
-        <translation>klogg -- 切換到已開啟的檔案</translation>
+        <source>flogg -- switch to file</source>
+        <translation>flogg -- 切換到已開啟的檔案</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="2269"/>
-        <source>klogg - generate crash dump</source>
-        <translation>klogg - 產生當機記錄</translation>
+        <source>flogg - generate crash dump</source>
+        <translation>flogg - 產生當機記錄</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="2270"/>
-        <source>This will shutdown klogg and generate diagnostic crash dump. Continue?</source>
-        <translation>關閉 klogg 並產生診斷性的當機記錄。是否繼續？</translation>
+        <source>This will shutdown flogg and generate diagnostic crash dump. Continue?</source>
+        <translation>關閉 flogg 並產生診斷性的當機記錄。是否繼續？</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="871"/>
@@ -493,8 +493,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="196"/>
-        <source>klogg - scratchpad</source>
-        <translation>klogg - 便條</translation>
+        <source>flogg - scratchpad</source>
+        <translation>flogg - 便條</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="740"/>
@@ -525,8 +525,8 @@
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="966"/>
         <location filename="../../ui/src/mainwindow.cpp" line="970"/>
-        <source>Klogg - File download</source>
-        <translation>klogg -- 檔案下載</translation>
+        <source>flogg - File download</source>
+        <translation>flogg -- 檔案下載</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="971"/>
@@ -535,8 +535,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="996"/>
-        <source>klogg - remove from recent</source>
-        <translation>klogg - 從最近檔案中移除</translation>
+        <source>flogg - remove from recent</source>
+        <translation>flogg - 從最近檔案中移除</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="997"/>
@@ -545,8 +545,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1018"/>
-        <source>klogg - remove from favorites</source>
-        <translation>klogg - 從書籤中移除</translation>
+        <source>flogg - remove from favorites</source>
+        <translation>flogg - 從書籤中移除</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1019"/>
@@ -570,8 +570,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1205"/>
-        <source>About klogg</source>
-        <translation>關於 klogg</translation>
+        <source>About flogg</source>
+        <translation>關於 flogg</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1206"/>
@@ -585,8 +585,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1234"/>
-        <source>klogg documentation</source>
-        <translation>klogg 文件</translation>
+        <source>flogg documentation</source>
+        <translation>flogg 文件</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1695"/>
@@ -608,8 +608,8 @@
         <location filename="../../ui/src/mainwindow.cpp" line="1680"/>
         <location filename="../../ui/src/mainwindow.cpp" line="1705"/>
         <location filename="../../ui/src/mainwindow.cpp" line="1828"/>
-        <source>klogg</source>
-        <translation>klogg</translation>
+        <source>flogg</source>
+        <translation>flogg</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1328"/>
@@ -686,8 +686,8 @@
     <name>OptionsDialog</name>
     <message>
         <location filename="../../ui/include/optionsdialog.ui" line="20"/>
-        <source>Klogg preferences</source>
-        <translation>Klogg 偏好設定</translation>
+        <source>flogg preferences</source>
+        <translation>flogg 偏好設定</translation>
     </message>
     <message>
         <location filename="../../ui/include/optionsdialog.ui" line="33"/>
@@ -1046,8 +1046,8 @@
     </message>
     <message>
         <location filename="../../ui/src/optionsdialog.cpp" line="574"/>
-        <source>Klogg needs to be restarted to apply some changes. </source>
-        <translation>Klogg 需要關閉後重新開啟才能套用這些更改</translation>
+        <source>flogg needs to be restarted to apply some changes. </source>
+        <translation>flogg 需要關閉後重新開啟才能套用這些更改</translation>
     </message>
     <message>
         <location filename="../../ui/src/optionsdialog.cpp" line="687"/>
@@ -1652,8 +1652,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindowtext.cpp" line="30"/>
-        <source>Create new klogg window</source>
-        <translation>建立新 klogg 視窗</translation>
+        <source>Create new flogg window</source>
+        <translation>建立新 flogg 視窗</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindowtext.cpp" line="31"/>
@@ -2031,8 +2031,8 @@
     <name>klogg::mainwindow::trayicon</name>
     <message>
         <location filename="../../ui/src/mainwindowtext.cpp" line="26"/>
-        <source>klogg log viewer</source>
-        <translation>Klogg 日誌檢視器</translation>
+        <source>flogg log viewer</source>
+        <translation>flogg 日誌檢視器</translation>
     </message>
 </context>
 </TS>

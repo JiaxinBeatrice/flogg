@@ -21,9 +21,16 @@
 
 #include "klogg_version.h"
 
+#include <QStringList>
+
 QLatin1String kloggVersion()
 {
     return QLatin1String( KLOGG_VERSION );
+}
+
+QString kloggReleaseVersion()
+{
+    return QString( kloggVersion() ).split( '.' ).mid( 0, 3 ).join( '.' );
 }
 
 QLatin1String kloggBuildDate()

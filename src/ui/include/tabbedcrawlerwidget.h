@@ -71,6 +71,10 @@ class TabbedCrawlerWidget : public QTabWidget {
 
     void removeCrawler( int index );
 
+    // The style sheet of the tab bar makes Qt skip this widget and the tabs when the palette
+    // of the application changes, the window passes it on
+    void followParentPalette();
+
   protected:
     void keyPressEvent( QKeyEvent* event ) override;
     void mouseReleaseEvent( QMouseEvent* event ) override;
@@ -83,6 +87,8 @@ class TabbedCrawlerWidget : public QTabWidget {
     // Set the data status (icon) for the tab number 'index'
     void setTabDataStatus( int index, DataStatus status );
 
+    // The close buttons of the tabs depend on the style
+    void updateTabBarStyle();
     void loadIcons();
     // Marks the tabs using the shared filters
     void updateSharedMarks();

@@ -268,10 +268,13 @@ void CrawlerWidget::doSendAllStateSignals()
 void CrawlerWidget::changeEvent( QEvent* event )
 {
     if ( event->type() == QEvent::StyleChange ) {
-        dispatchToMainThread( [ this ] {
-            loadIcons();
-            searchInfoLineDefaultPalette_ = this->palette();
-        } );
+        // Dropped when the widget is destroyed first
+        dispatchToObject(
+            [ this ] {
+                loadIcons();
+                searchInfoLineDefaultPalette_ = this->palette();
+            },
+            this );
     }
 
     QWidget::changeEvent( event );

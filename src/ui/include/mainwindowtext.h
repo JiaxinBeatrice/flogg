@@ -64,8 +64,6 @@ extern const char* wrapText;
 extern const char* stopText;
 extern const char* optionsText;
 extern const char* optionsStatusTip;
-extern const char* showDocumentationText;
-extern const char* showDocumentationStatusTip;
 extern const char* aboutText;
 extern const char* aboutStatusTip;
 extern const char* aboutQtText;

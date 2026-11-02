@@ -170,8 +170,8 @@
     <name>CrawlerWidget</name>
     <message>
         <location filename="../../ui/src/crawlerwidget.cpp" line="425"/>
-        <source>klogg</source>
-        <translation>klogg</translation>
+        <source>flogg</source>
+        <translation>flogg</translation>
     </message>
     <message>
         <location filename="../../ui/src/crawlerwidget.cpp" line="426"/>
@@ -473,8 +473,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="196"/>
-        <source>klogg - scratchpad</source>
-        <translation>klogg - scratchpad</translation>
+        <source>flogg - scratchpad</source>
+        <translation>flogg - scratchpad</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="740"/>
@@ -505,8 +505,8 @@
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="966"/>
         <location filename="../../ui/src/mainwindow.cpp" line="970"/>
-        <source>Klogg - File download</source>
-        <translation>Klogg - File download</translation>
+        <source>flogg - File download</source>
+        <translation>flogg - File download</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="971"/>
@@ -515,8 +515,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="996"/>
-        <source>klogg - remove from recent</source>
-        <translation>klogg - remove from recent</translation>
+        <source>flogg - remove from recent</source>
+        <translation>flogg - remove from recent</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="997"/>
@@ -525,8 +525,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1018"/>
-        <source>klogg - remove from favorites</source>
-        <translation>klogg - remove from favorites</translation>
+        <source>flogg - remove from favorites</source>
+        <translation>flogg - remove from favorites</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1019"/>
@@ -550,8 +550,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1205"/>
-        <source>About klogg</source>
-        <translation>About klogg</translation>
+        <source>About flogg</source>
+        <translation>About flogg</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1206"/>
@@ -565,8 +565,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1234"/>
-        <source>klogg documentation</source>
-        <translation>klogg documentation</translation>
+        <source>flogg documentation</source>
+        <translation>flogg documentation</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1328"/>
@@ -603,8 +603,8 @@
         <location filename="../../ui/src/mainwindow.cpp" line="1680"/>
         <location filename="../../ui/src/mainwindow.cpp" line="1705"/>
         <location filename="../../ui/src/mainwindow.cpp" line="1828"/>
-        <source>klogg</source>
-        <translation>klogg</translation>
+        <source>flogg</source>
+        <translation>flogg</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="1641"/>
@@ -668,26 +668,26 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="2117"/>
-        <source>klogg -- switch to file</source>
-        <translation>klogg -- switch to file</translation>
+        <source>flogg -- switch to file</source>
+        <translation>flogg -- switch to file</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="2269"/>
-        <source>klogg - generate crash dump</source>
-        <translation>klogg - generate crash dump</translation>
+        <source>flogg - generate crash dump</source>
+        <translation>flogg - generate crash dump</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindow.cpp" line="2270"/>
-        <source>This will shutdown klogg and generate diagnostic crash dump. Continue?</source>
-        <translation>This will shutdown klogg and generate diagnostic crash dump. Continue?</translation>
+        <source>This will shutdown flogg and generate diagnostic crash dump. Continue?</source>
+        <translation>This will shutdown flogg and generate diagnostic crash dump. Continue?</translation>
     </message>
 </context>
 <context>
     <name>OptionsDialog</name>
     <message>
         <location filename="../../ui/include/optionsdialog.ui" line="20"/>
-        <source>Klogg preferences</source>
-        <translation>Klogg preferences</translation>
+        <source>flogg preferences</source>
+        <translation>flogg preferences</translation>
     </message>
     <message>
         <location filename="../../ui/include/optionsdialog.ui" line="33"/>
@@ -1046,8 +1046,8 @@
     </message>
     <message>
         <location filename="../../ui/src/optionsdialog.cpp" line="574"/>
-        <source>Klogg needs to be restarted to apply some changes. </source>
-        <translation>Klogg needs to be restarted to apply some changes. </translation>
+        <source>flogg needs to be restarted to apply some changes. </source>
+        <translation>flogg needs to be restarted to apply some changes. </translation>
     </message>
     <message>
         <location filename="../../ui/src/optionsdialog.cpp" line="687"/>
@@ -1652,8 +1652,8 @@
     </message>
     <message>
         <location filename="../../ui/src/mainwindowtext.cpp" line="30"/>
-        <source>Create new klogg window</source>
-        <translation>Create new klogg window</translation>
+        <source>Create new flogg window</source>
+        <translation>Create new flogg window</translation>
     </message>
     <message>
         <location filename="../../ui/src/mainwindowtext.cpp" line="31"/>
@@ -2031,8 +2031,8 @@
     <name>klogg::mainwindow::trayicon</name>
     <message>
         <location filename="../../ui/src/mainwindowtext.cpp" line="26"/>
-        <source>klogg log viewer</source>
-        <translation>klogg log viewer</translation>
+        <source>flogg log viewer</source>
+        <translation>flogg log viewer</translation>
     </message>
 </context>
 </TS>

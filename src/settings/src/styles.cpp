@@ -19,6 +19,9 @@
 
 #include <algorithm>
 
+#include <array>
+#include <vector>
+
 #include <QApplication>
 #include <QPainter>
 #include <QPainterPath>
@@ -119,9 +122,12 @@ class LightStyle : public QProxyStyle {
                  && option->state & State_Enabled ) {
                 const auto pressed = option->state & ( State_On | State_Sunken );
                 painter->save();
+                // Rounded like the buttons that are not pressed
+                painter->setRenderHint( QPainter::Antialiasing );
                 painter->setPen( pressed ? QColor( 0x99, 0xc9, 0xef ) : QColor( 0xcc, 0xe4, 0xf7 ) );
                 painter->setBrush( pressed ? QColor( 0xcb, 0xe3, 0xf7 ) : QColor( 0xe5, 0xf1, 0xfb ) );
-                painter->drawRect( option->rect.adjusted( 0, 0, -1, -1 ) );
+                painter->drawRoundedRect( QRectF( option->rect ).adjusted( 0.5, 0.5, -0.5, -0.5 ),
+                                          3, 3 );
                 painter->restore();
                 return;
             }
@@ -217,6 +223,37 @@ class LightStyle : public QProxyStyle {
     }
 };
 
+// Fusion (or Windows) with the pressed and hovered buttons of the Light style in dark colours:
+// checked tool buttons are clearly on
+class DarkStyle : public QProxyStyle {
+  public:
+    explicit DarkStyle( QStyle* base )
+        : QProxyStyle( base )
+    {
+    }
+
+    void drawPrimitive( PrimitiveElement element, const QStyleOption* option, QPainter* painter,
+                        const QWidget* widget ) const override
+    {
+        const auto enabled = option->state.testFlag( State_Enabled );
+        const auto pressed = option->state & ( State_On | State_Sunken );
+        const auto hovered = option->state.testFlag( State_MouseOver );
+        if ( ( element == PE_PanelButtonCommand || element == PE_PanelButtonTool ) && enabled
+             && ( pressed || hovered ) ) {
+            // Rounded like the buttons that are not pressed
+            painter->save();
+            painter->setRenderHint( QPainter::Antialiasing );
+            painter->setPen( pressed ? QColor( 0x4a, 0x90, 0xc8 ) : QColor( 0x5a, 0x64, 0x70 ) );
+            painter->setBrush( pressed ? QColor( 0x2b, 0x4a, 0x63 ) : QColor( 0x3e, 0x44, 0x4b ) );
+            painter->drawRoundedRect( QRectF( option->rect ).adjusted( 0.5, 0.5, -0.5, -0.5 ), 3,
+                                      3 );
+            painter->restore();
+            return;
+        }
+        QProxyStyle::drawPrimitive( element, option, painter, widget );
+    }
+};
+
 } // namespace
 
 QStringList StyleManager::availableStyles()
@@ -262,11 +299,86 @@ QString StyleManager::defaultPlatformStyle()
 #endif
 }
 
+namespace {
+
+// Classes the platform theme gives their own palette (macOS: the text of line edits and
+// item views is not white in dark mode), it would win over the one of the Dark and Light styles
+constexpr std::array<const char*, 17> ThemeClasses{
+    "QToolButton", "QAbstractButton", "QCheckBox", "QRadioButton", "QHeaderView",
+    "QAbstractItemView", "QMessageBoxLabel", "QTabBar", "QLabel", "QGroupBox", "QMenu",
+    "QMenuBar", "QTextEdit", "QTextControl", "QLineEdit", "QComboBox", "QAbstractSpinBox" };
+
+// The palettes of the platform, taken before a style changes them
+const std::vector<QPalette>& themePalettes()
+{
+    static const auto palettes = [] {
+        std::vector<QPalette> saved;
+        for ( const auto* className : ThemeClasses ) {
+            saved.push_back( QApplication::palette( className ) );
+        }
+        return saved;
+    }();
+    return palettes;
+}
+
+// The selection colours of the options, in the active and the inactive windows
+QPalette withSelection( QPalette palette )
+{
+    for ( const auto group : { QPalette::Active, QPalette::Inactive } ) {
+        palette.setColor( group, QPalette::Highlight, StyleManager::selectionBackColor() );
+        palette.setColor( group, QPalette::HighlightedText, StyleManager::selectionTextColor() );
+    }
+    return palette;
+}
+
+void setThemePalettes( const QPalette& palette )
+{
+    for ( const auto* className : ThemeClasses ) {
+        QApplication::setPalette( palette, className );
+    }
+}
+
+void restoreThemePalettes()
+{
+    const auto& palettes = themePalettes();
+    for ( size_t i = 0; i < ThemeClasses.size(); ++i ) {
+        QApplication::setPalette( withSelection( palettes[ i ] ), ThemeClasses[ i ] );
+    }
+}
+
+// The log views and the tree of the filter panel (the only QTreeWidget of flogg): their text
+// colour may differ from the other widgets. Set last, an exact class name wins.
+void setViewsPalette( const QPalette& palette )
+{
+    for ( const auto* className : { "LogMainView", "FilteredView", "QTreeWidget" } ) {
+        QApplication::setPalette( palette, className );
+    }
+}
+
+} // namespace
+
+QColor StyleManager::selectionBackColor()
+{
+    return Configuration::get().selectionBackColor();
+}
+
+QColor StyleManager::selectionTextColor()
+{
+    return Configuration::get().selectionTextColor();
+}
+
 void StyleManager::applyStyle( const QString& style )
 {
     LOG_INFO << "Setting style to " << style;
+    // Before the application palette changes: classes without their own palette use it
+    themePalettes();
 
     if ( style == DarkStyleKey || style == DarkWindowsStyleKey ) {
+#if QT_VERSION >= QT_VERSION_CHECK( 6, 8, 0 )
+        // Native parts (title bar, dialogs) follow the palette. First: the change of the
+        // platform theme resets the palettes of the widget classes.
+        qApp->styleHints()->setColorScheme( Qt::ColorScheme::Dark );
+#endif
         const auto palette = Configuration::get().darkPalette();
 
         QPalette darkPalette;
@@ -296,31 +408,40 @@ void StyleManager::applyStyle( const QString& style )
         darkPalette.setColor( QPalette::Disabled, QPalette::Light,
                               QColor( palette.at( "DisabledLight" ) ) );
 
-        if ( style == DarkWindowsStyleKey ) {
-            qApp->setStyle( QStyleFactory::create( WindowsKey ) );
-        }
-        else {
-            qApp->setStyle( QStyleFactory::create( FusionKey ) );
-        }
+        qApp->setStyle( new DarkStyle( QStyleFactory::create(
+            style == DarkWindowsStyleKey ? WindowsKey : FusionKey ) ) );
+        darkPalette = withSelection( darkPalette );
 
         qApp->setPalette( darkPalette );
         QToolTip::setPalette( darkPalette );
-#if QT_VERSION >= QT_VERSION_CHECK( 6, 8, 0 )
-        // Native parts (title bar, dialogs) follow the palette
-        qApp->styleHints()->setColorScheme( Qt::ColorScheme::Dark );
-#endif
+        setThemePalettes( darkPalette );
+        auto viewsPalette = darkPalette;
+        viewsPalette.setColor( QPalette::Text, QColor( palette.at( "LogText" ) ) );
+        setViewsPalette( viewsPalette );
     }
     else if ( style == LightStyleKey ) {
 #if QT_VERSION >= QT_VERSION_CHECK( 6, 8, 0 )
         qApp->styleHints()->setColorScheme( Qt::ColorScheme::Light );
 #endif
         qApp->setStyle( new LightStyle );
-        const auto lightPalette = qApp->style()->standardPalette();
+        const auto lightPalette = withSelection( qApp->style()->standardPalette() );
         qApp->setPalette( lightPalette );
         QToolTip::setPalette( lightPalette );
+        setThemePalettes( lightPalette );
+        setViewsPalette( lightPalette );
     }
     else {
+        // Also undoes a Dark or Light style chosen while flogg runs
+#if QT_VERSION >= QT_VERSION_CHECK( 6, 8, 0 )
+        qApp->styleHints()->unsetColorScheme();
+#endif
         qApp->setStyle( style );
         qApp->setStyleSheet( "" );
+        // An empty palette gives back the one of the platform
+        qApp->setPalette( QPalette() );
+        qApp->setPalette( withSelection( QApplication::palette() ) );
+        QToolTip::setPalette( QApplication::palette( "QTipLabel" ) );
+        restoreThemePalettes();
+        setViewsPalette( QApplication::palette() );
     }
 }
