@@ -5,6 +5,7 @@ set(UI_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/crawlerwidget_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/filtersearch_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/updatechecker_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/revealfile_test.cpp
 )
 
 if(NOT APPLE)

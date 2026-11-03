@@ -23,10 +23,11 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QFileInfo>
 #include <QMenu>
 
 #include "containers.h"
-#include "openfilehelper.h"
+#include "revealfile.h"
 #include "clipboard.h"
 
 void PathLine::setPath( const QString& path )
@@ -54,7 +55,7 @@ void PathLine::contextMenuEvent( QContextMenuEvent* event )
     } );
 
     connect( openContainingFolder, &QAction::triggered, this,
-             [ this ]( auto ) { showPathInFileExplorer( this->path_ ); } );
+             [ this ]( auto ) { openFolderOfFile( this, this->path_ ); } );
 
     copySelection->setEnabled( this->hasSelectedText() );
     connect( copySelection, &QAction::triggered, this,

@@ -105,6 +105,7 @@
 #include "filterpanel.h"
 #include "persistentinfo.h"
 #include "progress.h"
+#include "revealfile.h"
 #include "readablesize.h"
 #include "recentfiles.h"
 #include "sessioninfo.h"
@@ -1108,7 +1109,7 @@ void MainWindow::copyFullPath()
 
 void MainWindow::openContainingFolder()
 {
-    showPathInFileExplorer( session_.getFilename( currentCrawlerWidget() ) );
+    openFolderOfFile( this, session_.getFilename( currentCrawlerWidget() ) );
 }
 
 void MainWindow::openInEditor()

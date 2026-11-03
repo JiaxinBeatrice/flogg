@@ -130,7 +130,7 @@ QDialog::DialogCode askUserConfirmation( const QString& formattedReport, const Q
     exploreButton->setText( "Open report directory" );
     exploreButton->setFlat( true );
     QObject::connect( exploreButton.get(), &QPushButton::clicked,
-                      [ &reportPath ] { showPathInFileExplorer( reportPath ); } );
+                      [ &reportPath ] { revealPathInFileExplorer( reportPath ); } );
 
     auto privacyLayout = std::make_unique<QHBoxLayout>();
     privacyLayout->addWidget( privacyPolicy.release() );
