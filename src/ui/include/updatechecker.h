@@ -20,6 +20,7 @@
 #ifndef KLOGG_UPDATECHECKER_H
 #define KLOGG_UPDATECHECKER_H
 
+#include <functional>
 #include <optional>
 
 #include <QJsonObject>
@@ -52,6 +53,22 @@ std::optional<QVersionNumber> releaseVersion( const QString& buildVersion );
 // The release in the reply of the GitHub releases API, the package matching the suffix
 std::optional<Release> parseRelease( const QJsonObject& json, const QString& assetSuffix );
 
+// The release of a tag (v1.2.0), without notes nor package
+std::optional<Release> releaseOfTag( const QString& tag );
+
+// The tag of a release page (https://github.com/<repo>/releases/tag/v1.2.0)
+QString tagOfReleasePage( const QUrl& page );
+
+// The changes of a version in CHANGELOG.md: the lines below "## 1.2.0 (date)"
+QString changelogSection( const QString& changelog, const QVersionNumber& version );
+
+// The latest release without the GitHub API, which answers only 60 requests an hour to an
+// address (often shared by a whole office): the page releases/latest redirects to, the notes
+// from CHANGELOG.md of its tag and the package of this platform when it exists
+using FetchCallback = std::function<void( std::optional<Release> release, QString error )>;
+void fetchLatestWithoutApi( QNetworkAccessManager& network, const QString& assetSuffix,
+                            FetchCallback done );
+
 // Package suffix of this platform, empty when releases have none
 QString platformAssetSuffix();
 
@@ -75,6 +92,8 @@ class UpdateChecker : public QObject {
 
     void check( bool manual );
     void onReply( bool manual );
+    void onRelease( const updates::Release& release, bool manual );
+    void fail( const QString& error, bool manual );
     void offer( const updates::Release& release, bool manual );
     void download( const updates::Release& release );
     // Prepared to run when flogg quits, then asks every window to close

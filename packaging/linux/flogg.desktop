@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=flogg
+GenericName=Log file viewer
+Exec=flogg %F
+Icon=flogg
+Type=Application
+Comment=Log viewer with a filter panel, based on klogg
+Terminal=false
+Categories=Utility;TextTools;Development;
+MimeType=text/plain;
+Actions=NewInstance;
+
+[Desktop Action NewInstance]
+Exec=flogg --multi %F
+Name=Open In A New flogg

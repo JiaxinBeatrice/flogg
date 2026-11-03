@@ -6,7 +6,7 @@ flogg is a log viewer built on [klogg](https://github.com/variar/klogg). It keep
 
 ![flogg with the filter panel](docs/images/filter-panel.png)
 
-Downloads for Windows (x64) and macOS (Apple Silicon) are on the [releases page](https://github.com/howardgood88/flogg/releases/latest).
+Downloads for Windows (x64) and Linux (x64 AppImage: `chmod +x` it and run it) are on the [releases page](https://github.com/howardgood88/flogg/releases/latest). macOS (Apple Silicon) packages are only in releases up to 1.1.0 for now.
 
 ## Features
 

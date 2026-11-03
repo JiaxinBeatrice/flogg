@@ -52,6 +52,9 @@ namespace {
 
 const QUrl LatestReleaseUrl{ "https://api.github.com/repos/howardgood88/flogg/releases/latest" };
 const QUrl ReleasesPage{ "https://github.com/howardgood88/flogg/releases" };
+const QUrl LatestReleasePage{ "https://github.com/howardgood88/flogg/releases/latest" };
+const QString ChangelogUrl{
+    "https://raw.githubusercontent.com/howardgood88/flogg/%1/CHANGELOG.md" };
 
 constexpr QLatin1String LastCheckKey = QLatin1String( "update/lastCheck" );
 constexpr QLatin1String SkippedVersionKey = QLatin1String( "update/skippedVersion" );
@@ -68,7 +71,6 @@ QSettings& settings()
 QNetworkRequest githubRequest( const QUrl& url )
 {
     QNetworkRequest request( url );
-    request.setRawHeader( "Accept", "application/vnd.github+json" );
     request.setRawHeader( "User-Agent", QByteArray( "flogg/" ) + kloggVersion().data() );
     if ( !Configuration::get().verifySslPeers() ) {
         auto sslConfiguration = request.sslConfiguration();
@@ -78,13 +80,20 @@ QNetworkRequest githubRequest( const QUrl& url )
     return request;
 }
 
+QNetworkRequest apiRequest( const QUrl& url )
+{
+    auto request = githubRequest( url );
+    request.setRawHeader( "Accept", "application/vnd.github+json" );
+    return request;
+}
+
 #if defined( Q_OS_WIN )
 // A literal for the PowerShell scripts
 QString psQuote( const QString& text )
 {
     return "'" + QString( text ).replace( "'", "''" ) + "'";
 }
-#elif defined( Q_OS_MACOS )
+#else
 // A literal for the shell scripts
 QString shQuote( const QString& text )
 {
@@ -106,22 +115,65 @@ std::optional<QVersionNumber> releaseVersion( const QString& buildVersion )
     return QVersionNumber( version.majorVersion(), version.minorVersion(), version.microVersion() );
 }
 
-std::optional<Release> parseRelease( const QJsonObject& json, const QString& assetSuffix )
+std::optional<Release> releaseOfTag( const QString& tag )
 {
-    Release release;
-    release.tag = json[ "tag_name" ].toString();
-    auto versionText = release.tag;
+    auto versionText = tag;
     if ( versionText.startsWith( 'v' ) ) {
         versionText.remove( 0, 1 );
     }
+    Release release;
     release.version = QVersionNumber::fromString( versionText );
     if ( release.version.isNull() ) {
         return {};
     }
+    release.tag = tag;
+    release.page = QUrl( ReleasesPage.toString() + "/tag/" + tag );
+    return release;
+}
+
+QString tagOfReleasePage( const QUrl& page )
+{
+    const auto parts = page.path().split( '/', Qt::SkipEmptyParts );
+    const auto index = parts.indexOf( "tag" );
+    if ( index < 1 || index + 1 >= parts.size() || parts[ index - 1 ] != "releases" ) {
+        return {};
+    }
+    return parts[ index + 1 ];
+}
+
+QString changelogSection( const QString& changelog, const QVersionNumber& version )
+{
+    const auto versionText = version.toString();
+    QStringList section;
+    bool found = false;
+    for ( auto line : changelog.split( '\n' ) ) {
+        if ( line.endsWith( '\r' ) ) {
+            line.chop( 1 );
+        }
+        if ( line.startsWith( "## " ) ) {
+            if ( found ) {
+                break;
+            }
+            found = line.mid( 3 ).section( ' ', 0, 0, QString::SectionSkipEmpty ) == versionText;
+        }
+        else if ( found ) {
+            section.append( line );
+        }
+    }
+    return section.join( '\n' ).trimmed();
+}
+
+std::optional<Release> parseRelease( const QJsonObject& json, const QString& assetSuffix )
+{
+    auto parsed = releaseOfTag( json[ "tag_name" ].toString() );
+    if ( !parsed ) {
+        return {};
+    }
+    auto& release = *parsed;
     release.notes = json[ "body" ].toString().trimmed();
-    release.page = QUrl( json[ "html_url" ].toString() );
-    if ( !release.page.isValid() || release.page.isEmpty() ) {
-        release.page = ReleasesPage;
+    const QUrl page( json[ "html_url" ].toString() );
+    if ( page.isValid() && !page.isEmpty() ) {
+        release.page = page;
     }
 
     if ( !assetSuffix.isEmpty() ) {
@@ -135,7 +187,58 @@ std::optional<Release> parseRelease( const QJsonObject& json, const QString& ass
             }
         }
     }
-    return release;
+    return parsed;
+}
+
+void fetchLatestWithoutApi( QNetworkAccessManager& network, const QString& assetSuffix,
+                            FetchCallback done )
+{
+    auto* latest = network.head( githubRequest( LatestReleasePage ) );
+    QObject::connect( latest, &QNetworkReply::finished, latest, [ &network, latest, assetSuffix,
+                                                                  done ] {
+        latest->deleteLater();
+        if ( latest->error() != QNetworkReply::NoError ) {
+            done( {}, latest->errorString() );
+            return;
+        }
+        // The url after the redirects
+        const auto release = releaseOfTag( tagOfReleasePage( latest->url() ) );
+        if ( !release ) {
+            done( {}, QCoreApplication::translate( "UpdateChecker",
+                                                   "the latest release page has no version" ) );
+            return;
+        }
+
+        auto* notes = network.get( githubRequest( QUrl( ChangelogUrl.arg( release->tag ) ) ) );
+        QObject::connect( notes, &QNetworkReply::finished, notes, [ &network, notes,
+                                                                    release = *release,
+                                                                    assetSuffix, done ]() mutable {
+            notes->deleteLater();
+            // Without notes the dialog links the release page
+            if ( notes->error() == QNetworkReply::NoError ) {
+                release.notes
+                    = changelogSection( QString::fromUtf8( notes->readAll() ), release.version );
+            }
+            if ( assetSuffix.isEmpty() ) {
+                done( release, {} );
+                return;
+            }
+
+            // Named by the release job
+            const auto name = "flogg-" + release.version.toString() + assetSuffix;
+            const QUrl url( ReleasesPage.toString() + "/download/" + release.tag + "/" + name );
+            auto* asset = network.head( githubRequest( url ) );
+            QObject::connect( asset, &QNetworkReply::finished, asset,
+                              [ asset, release, name, url, done ]() mutable {
+                                  asset->deleteLater();
+                                  if ( asset->error() == QNetworkReply::NoError ) {
+                                      release.assetName = name;
+                                      release.assetUrl = url;
+                                  }
+                                  done( release, {} );
+                              } );
+        } );
+    } );
 }
 
 QString platformAssetSuffix()
@@ -144,6 +247,8 @@ QString platformAssetSuffix()
     return "-windows-x64.zip";
 #elif defined( Q_OS_MACOS ) && defined( Q_PROCESSOR_ARM_64 )
     return "-macos-arm64.dmg";
+#elif defined( Q_OS_LINUX ) && defined( Q_PROCESSOR_X86_64 )
+    return "-linux-x64.AppImage";
 #else
     return {};
 #endif
@@ -191,7 +296,7 @@ void UpdateChecker::check( bool manual )
     checking_ = true;
 
     LOG_INFO << "Checking for a new flogg release";
-    auto* reply = network_.get( githubRequest( LatestReleaseUrl ) );
+    auto* reply = network_.get( apiRequest( LatestReleaseUrl ) );
     connect( reply, &QNetworkReply::finished, this, [ this, manual ] { onReply( manual ); } );
 }
 
@@ -201,28 +306,55 @@ void UpdateChecker::onReply( bool manual )
     auto* reply = qobject_cast<QNetworkReply*>( sender() );
     reply->deleteLater();
 
-    const auto failed = [ this, manual ]( const QString& error ) {
-        LOG_WARNING << "Update check failed: " << error;
-        if ( manual ) {
-            QMessageBox::warning( dialogParent(), tr( "flogg update" ),
-                                  tr( "Could not check for a new version:\n%1" ).arg( error ) );
-        }
-    };
-
     if ( reply->error() != QNetworkReply::NoError ) {
-        failed( reply->errorString() );
+        // 403 or 429 when this address asked the API too often, the release pages still answer
+        const auto status = reply->attribute( QNetworkRequest::HttpStatusCodeAttribute ).toInt();
+        const auto apiError
+            = status == 403 || status == 429
+                  ? tr( "GitHub limits how often it is asked from this network, "
+                        "try again in an hour." )
+                  : reply->errorString();
+        LOG_INFO << "GitHub API failed: " << apiError << ", using the release pages";
+
+        checking_ = true;
+        updates::fetchLatestWithoutApi(
+            network_, updates::platformAssetSuffix(),
+            [ this, manual, apiError ]( std::optional<updates::Release> release,
+                                        const QString& error ) {
+                checking_ = false;
+                if ( release ) {
+                    onRelease( *release, manual );
+                }
+                else {
+                    LOG_WARNING << "Release pages failed: " << error;
+                    fail( apiError, manual );
+                }
+            } );
         return;
     }
 
     const auto json = QJsonDocument::fromJson( reply->readAll() ).object();
     const auto release = updates::parseRelease( json, updates::platformAssetSuffix() );
     if ( !release ) {
-        failed( tr( "the reply of GitHub has no release version" ) );
+        fail( tr( "the reply of GitHub has no release version" ), manual );
         return;
     }
+    onRelease( *release, manual );
+}
 
+void UpdateChecker::onRelease( const updates::Release& release, bool manual )
+{
     settings().setValue( LastCheckKey, QDateTime::currentDateTimeUtc() );
-    offer( *release, manual );
+    offer( release, manual );
+}
+
+void UpdateChecker::fail( const QString& error, bool manual )
+{
+    LOG_WARNING << "Update check failed: " << error;
+    if ( manual ) {
+        QMessageBox::warning( dialogParent(), tr( "flogg update" ),
+                              tr( "Could not check for a new version:\n%1" ).arg( error ) );
+    }
 }
 
 void UpdateChecker::offer( const updates::Release& release, bool manual )
@@ -468,6 +600,26 @@ bool UpdateChecker::prepareInstall( const QString& package )
                       "open %3\n"
                       "rm -rf %5\n" )
                  .arg( pid, shQuote( package ), shQuote( bundle ), shQuote( bundle + ".old" ),
+                       shQuote( directory ) );
+    scriptPath = QDir( directory ).filePath( "install.sh" );
+    program = "/bin/sh";
+    arguments = { scriptPath };
+#elif defined( Q_OS_LINUX )
+    // The AppImage flogg runs from (set by its runtime), replaced by the new one
+    const auto appImage = qEnvironmentVariable( "APPIMAGE" );
+    if ( appImage.isEmpty() || !QFileInfo( QFileInfo( appImage ).absolutePath() ).isWritable() ) {
+        return false;
+    }
+
+    script = QString( "#!/bin/sh\n"
+                      "while kill -0 %1 2>/dev/null; do sleep 0.2; done\n"
+                      "if cp %2 %4 && chmod +x %4 && mv -f %4 %3; then\n"
+                      "  rm -rf %5\n"
+                      "else\n"
+                      "  rm -f %4\n"
+                      "fi\n"
+                      "%3 >/dev/null 2>&1 &\n" )
+                 .arg( pid, shQuote( package ), shQuote( appImage ), shQuote( appImage + ".new" ),
                        shQuote( directory ) );
     scriptPath = QDir( directory ).filePath( "install.sh" );
     program = "/bin/sh";

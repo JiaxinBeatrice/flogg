@@ -19,9 +19,12 @@
 
 #include <catch2/catch.hpp>
 
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonDocument>
+#include <QNetworkAccessManager>
 #include <QTextBrowser>
+#include <QTimer>
 
 #include "updatechecker.h"
 
@@ -71,6 +74,62 @@ SCENARIO( "Update checker reads the GitHub release", "[update]" )
     CHECK( updates::parseRelease( noNotes, {} )->notes.isEmpty() );
 
     CHECK_FALSE( updates::parseRelease( QJsonObject{ { "tag_name", "latest" } }, {} ) );
+}
+
+SCENARIO( "Update checker reads the release pages", "[update]" )
+{
+    CHECK( updates::tagOfReleasePage(
+               QUrl( "https://github.com/howardgood88/flogg/releases/tag/v1.2.0" ) )
+           == "v1.2.0" );
+    CHECK( updates::tagOfReleasePage( QUrl( "https://github.com/howardgood88/flogg/releases" ) )
+               .isEmpty() );
+    CHECK( updates::tagOfReleasePage( QUrl( "https://github.com/howardgood88/flogg/tag" ) )
+               .isEmpty() );
+
+    const auto release = updates::releaseOfTag( "v1.2.0" );
+    REQUIRE( release );
+    CHECK( release->version == QVersionNumber( 1, 2, 0 ) );
+    CHECK( release->page
+           == QUrl( "https://github.com/howardgood88/flogg/releases/tag/v1.2.0" ) );
+    CHECK_FALSE( updates::releaseOfTag( "" ) );
+
+    const QString changelog = "# flogg changes\r\n\r\n"
+                              "## Unreleased\r\n\r\n- Next\r\n\r\n"
+                              "## 1.2.0 (2026-11-03)\r\n\r\n- Faster\r\n- Smaller\r\n\r\n"
+                              "## 1.1.0 (2026-11-02)\r\n\r\n- Older\r\n";
+    CHECK( updates::changelogSection( changelog, QVersionNumber( 1, 2, 0 ) )
+           == "- Faster\n- Smaller" );
+    CHECK( updates::changelogSection( changelog, QVersionNumber( 1, 1, 0 ) ) == "- Older" );
+    CHECK( updates::changelogSection( changelog, QVersionNumber( 1, 1 ) ).isEmpty() );
+    CHECK( updates::changelogSection( changelog, QVersionNumber( 1, 3, 0 ) ).isEmpty() );
+}
+
+// Hidden, asks GitHub for the latest release without the API:
+// klogg_itests "[.network]"
+SCENARIO( "Update checker without the GitHub API", "[.network]" )
+{
+    QNetworkAccessManager network;
+    network.setRedirectPolicy( QNetworkRequest::NoLessSafeRedirectPolicy );
+
+    std::optional<updates::Release> release;
+    QString error;
+    QEventLoop loop;
+    updates::fetchLatestWithoutApi( network, "-windows-x64.zip",
+                                    [ & ]( auto latest, const QString& failure ) {
+                                        release = latest;
+                                        error = failure;
+                                        loop.quit();
+                                    } );
+    QTimer::singleShot( 30000, &loop, &QEventLoop::quit );
+    loop.exec();
+
+    INFO( error.toStdString() );
+    REQUIRE( release );
+    WARN( release->tag.toStdString() + " " + release->assetUrl.toString().toStdString() + "\n"
+          + release->notes.toStdString() );
+    CHECK( release->version >= QVersionNumber( 1, 1, 1 ) );
+    CHECK_FALSE( release->notes.isEmpty() );
+    CHECK( release->assetName.endsWith( "-windows-x64.zip" ) );
 }
 
 // Hidden, saves how the changelog of Help > What's new looks:

@@ -133,7 +133,8 @@ struct ParentConsole {
 };
 
 // The shell does not wait for a GUI application: its prompt is already shown when flogg
-// writes, an Enter typed for the user shows it again below the output
+// writes. The output replaces it and an Enter typed for the user shows it again below, the
+// Enter also ends the last line of the output
 void releaseParentConsole();
 
 ParentConsole& parentConsole()
@@ -162,6 +163,32 @@ void writeToParentConsole( HANDLE output, const QString& text )
     DWORD written = 0;
     ::WriteConsoleW( output, text.utf16(), static_cast<DWORD>( text.size() ), &written,
                      nullptr );
+}
+
+// Clears the prompt line of the shell and puts the cursor at its start
+void erasePrompt( HANDLE output )
+{
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    // The prompt can come a moment after flogg started
+    for ( int i = 0; i < 20; ++i ) {
+        if ( !::GetConsoleScreenBufferInfo( output, &info ) ) {
+            return;
+        }
+        if ( info.dwCursorPosition.X > 0 ) {
+            break;
+        }
+        ::Sleep( 10 );
+    }
+    if ( info.dwCursorPosition.X == 0 ) {
+        return;
+    }
+
+    const COORD start{ 0, info.dwCursorPosition.Y };
+    const auto length = static_cast<DWORD>( info.dwCursorPosition.X );
+    DWORD written = 0;
+    ::FillConsoleOutputCharacterW( output, L' ', length, start, &written );
+    ::FillConsoleOutputAttribute( output, info.wAttributes, length, start, &written );
+    ::SetConsoleCursorPosition( output, start );
 }
 
 void releaseParentConsole()
@@ -209,10 +236,15 @@ void printToConsole( const QString& text, bool isError )
 #ifdef Q_OS_WIN
     auto& console = parentConsole();
     if ( console.output != INVALID_HANDLE_VALUE ) {
-        // Below the prompt the shell has already shown
+        // The last line is ended by the next text or by the Enter at exit
+        if ( console.written ) {
+            writeToParentConsole( console.output, QStringLiteral( "\r\n" ) );
+        }
+        else {
+            erasePrompt( console.output );
+        }
         writeToParentConsole( console.output,
-                              ( console.written ? QString{} : QStringLiteral( "\r\n" ) )
-                                  + QString( line ).replace( '\n', QStringLiteral( "\r\n" ) ) );
+                              line.chopped( 1 ).replace( '\n', QStringLiteral( "\r\n" ) ) );
         console.written = true;
         return;
     }

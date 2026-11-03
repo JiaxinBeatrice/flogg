@@ -1,5 +1,13 @@
 # flogg changes
 
+## 1.1.2 (2026-11-03)
+
+- Linux package: an AppImage for x64 (`chmod +x` it and run it), updated like the Windows one
+- Updates are found also when GitHub limits the questions from your network (often in offices)
+- Command line on Windows: the output of `-L`, `-h` and `--version` takes the place of the prompt
+  the shell showed too early, without an empty line after it
+- No macOS package for now: the macOS build machines of GitHub are seldom available
+
 ## 1.1.1 (2026-11-03)
 
 - Updates: once a day at start, or with Help > Check for updates..., flogg looks for a newer
