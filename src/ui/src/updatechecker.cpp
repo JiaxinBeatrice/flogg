@@ -50,11 +50,11 @@
 
 namespace {
 
-const QUrl LatestReleaseUrl{ "https://api.github.com/repos/howardgood88/flogg/releases/latest" };
-const QUrl ReleasesPage{ "https://github.com/howardgood88/flogg/releases" };
-const QUrl LatestReleasePage{ "https://github.com/howardgood88/flogg/releases/latest" };
+const QUrl LatestReleaseUrl{ "https://api.github.com/repos/JiaxinBeatrice/flogg/releases/latest" };
+const QUrl ReleasesPage{ "https://github.com/JiaxinBeatrice/flogg/releases" };
+const QUrl LatestReleasePage{ "https://github.com/JiaxinBeatrice/flogg/releases/latest" };
 const QString ChangelogUrl{
-    "https://raw.githubusercontent.com/howardgood88/flogg/%1/CHANGELOG.md" };
+    "https://raw.githubusercontent.com/JiaxinBeatrice/flogg/%1/CHANGELOG.md" };
 
 constexpr QLatin1String LastCheckKey = QLatin1String( "update/lastCheck" );
 constexpr QLatin1String SkippedVersionKey = QLatin1String( "update/skippedVersion" );

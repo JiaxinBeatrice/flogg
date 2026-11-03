@@ -90,7 +90,7 @@ SCENARIO( "Update checker reads the release pages", "[update]" )
     REQUIRE( release );
     CHECK( release->version == QVersionNumber( 1, 2, 0 ) );
     CHECK( release->page
-           == QUrl( "https://github.com/howardgood88/flogg/releases/tag/v1.2.0" ) );
+           == QUrl( "https://github.com/JiaxinBeatrice/flogg/releases/tag/v1.2.0" ) );
     CHECK_FALSE( updates::releaseOfTag( "" ) );
 
     const QString changelog = "# flogg changes\r\n\r\n"

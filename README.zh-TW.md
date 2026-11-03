@@ -6,7 +6,7 @@ flogg 是以 [klogg](https://github.com/variar/klogg) 為基礎的 log 檢視器
 
 ![顯示 filter panel 的 flogg](docs/images/filter-panel.png)
 
-Windows（x64）與 Linux（x64 AppImage，`chmod +x` 後直接執行）的安裝檔請到 [Releases 頁面](https://github.com/howardgood88/flogg/releases/latest)下載。macOS（Apple Silicon）安裝檔目前只有 1.1.0 以前的版本。
+Windows（x64）與 Linux（x64 AppImage，`chmod +x` 後直接執行）的安裝檔請到 [Releases 頁面](https://github.com/JiaxinBeatrice/flogg/releases/latest)下載。macOS（Apple Silicon）安裝檔目前只有 1.1.0 以前的版本。
 
 ## 功能
 
